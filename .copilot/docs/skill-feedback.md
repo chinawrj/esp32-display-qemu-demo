@@ -98,3 +98,27 @@
 - **Detail**: A clean ESP-IDF build with LVGL has 1835 ninja steps. `-S -1000` only shows the tail. Skill should recommend `-S -3000` minimum for ESP-IDF + LVGL builds, or write to file (`-S - > /tmp/build.log`) for forensic analysis on failure.
 - **Workaround**: `tmux capture-pane -t SESS:WIN -p -S -8000` for first-time LVGL builds; `-S -3000` for incremental.
 - **Priority**: low
+
+### FB-010 (2026-04-29)
+- **Skill**: project-scaffolding (LVGL config)
+- **Category**: bug
+- **Summary**: ESP32 has only ~180KB DRAM bss budget; a 64KB static framebuffer overflows `dram0_0_seg`
+- **Detail**: Putting `static lv_color_t s_fb[240*135]` (≈64KB RGB565) in .bss alongside default LVGL static heap (LV_MEM_SIZE_KILOBYTES=128) caused linker error "section .dram0.bss will not fit in region dram0_0_seg". The skill should explicitly recommend heap_caps_malloc for large display buffers on ESP32 (not -S3/-P4 with PSRAM).
+- **Workaround**: `heap_caps_malloc(DISP_BYTES, MALLOC_CAP_DEFAULT | MALLOC_CAP_8BIT)` in app_main; release with free() if needed.
+- **Priority**: high
+
+### FB-011 (2026-04-29)
+- **Skill**: automated-testing
+- **Category**: missing-feature
+- **Summary**: No standard pattern for "capture LVGL framebuffer over UART for visual diff/snapshot test"
+- **Detail**: For QEMU-only projects (no real LCD), the only way to get a screenshot is firmware-driven UART dump. Skill could codify: (a) FULL render mode + single buffer, (b) base64 sentinel-bracketed payload, (c) 60-char-per-line for log line atomicity, (d) host decoder. Reusable across LVGL projects.
+- **Workaround**: see commit 6aa7fb1 (main.c dump_framebuffer_base64 + run-qemu.sh extraction).
+- **Priority**: medium
+
+### FB-012 (2026-04-29)
+- **Skill**: esp32-build-flash
+- **Category**: documentation
+- **Summary**: Stale "FAILED:" lines in tmux scrollback can mislead build-status detection
+- **Detail**: When grepping `tmux capture-pane -S -3000` for FAILED/error, output from a previous (failed) build remains in scroll history and gets matched. Sentinel-based exit-code detection (`__BUILD_EXIT_$?__`) is the only reliable signal, not text grep. Skill already advocates sentinels but should explicitly warn against grep-based status checks.
+- **Workaround**: always trust sentinel exit code, treat grep matches as advisory only.
+- **Priority**: low
