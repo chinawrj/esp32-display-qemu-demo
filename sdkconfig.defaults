@@ -27,3 +27,16 @@ CONFIG_LV_USE_OBSERVER=y
 
 # Larger main task stack for LVGL
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# LVGL heap (benchmark needs more than default 64K)
+CONFIG_LV_MEM_SIZE_KILOBYTES=128
+
+# Enable benchmark demo + perf log mode (so summary is printed via LV_LOG)
+CONFIG_LV_USE_DEMO_BENCHMARK=y
+CONFIG_LV_USE_PERF_MONITOR=y
+CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y
+
+# Fonts used by benchmark
+CONFIG_LV_FONT_MONTSERRAT_12=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_24=y

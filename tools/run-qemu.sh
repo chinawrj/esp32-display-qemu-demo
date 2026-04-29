@@ -72,7 +72,9 @@ if [ "$MODE" = "verify" ]; then
     check "lvgl initialized log"              'lvgl initialized: v[0-9]+\.[0-9]+'
     check "lvgl display created"              'lvgl display created: [0-9]+x[0-9]+'
     check "lvgl flush callback fired"         'lvgl flush #'
-    check "lvgl smoke-test completed"         'M2 LVGL smoke-test complete'
+    check "demo started"                      'lv_demo_benchmark started'
+    check "demo rendered ≥30 flushes (≥1s)"   'lvgl flush total: ([3-9][0-9]|[1-9][0-9]{2,})'
+    check "demo completion banner"            'M3 LVGL benchmark demo complete'
 
     echo ""
     echo "[run-qemu] Result: ${PASS} passed, ${FAIL} failed"
