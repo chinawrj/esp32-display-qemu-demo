@@ -69,3 +69,32 @@
 - **Detail**: ESP-IDF's bundled QEMU dynamically links Homebrew dylibs and removes itself if any are missing. The skill should warn users to `brew install qemu` (which pulls all transitive deps) before attempting QEMU verification, or install pixman + libgcrypt + glib + pcre2 + ... explicitly.
 - **Workaround**: `brew install qemu` first, then `idf_tools.py install qemu-xtensa`.
 - **Priority**: high
+
+### FB-007 (2026-04-29)
+- **Skill**: esp32-build-flash
+- **Category**: documentation
+- **Summary**: `idf.py qemu` CLI flags differ from documented examples
+- **Detail**: ESP-IDF v5.5 `idf.py qemu` accepts `--graphics` as a boolean flag (no `--graphics=no` or `--graphics=off`). For headless serial-only runs use `--qemu-extra-args=-nographic`. Also: `idf.py qemu` re-runs CMake configure even when build is up-to-date — for short-timeout verify scripts pre-build first or budget ≥30 s.
+- **Workaround**: Pre-build with `idf.py build` before `idf.py qemu`, and pass headless via `--qemu-extra-args=-nographic`. Use ≥30 s timeout in verify scripts.
+- **Priority**: medium
+
+### FB-008 (2026-04-29)
+- **Skill**: project-scaffolding (LVGL component integration)
+- **Category**: missing-feature
+- **Summary**: LVGL demo callback signatures + Kconfig dependencies aren't surfaced
+- **Detail**: To use `lv_demo_benchmark`, you must:
+  (a) `CONFIG_LV_USE_DEMO_BENCHMARK=y` in sdkconfig.defaults,
+  (b) bump `CONFIG_LV_MEM_SIZE_KILOBYTES` from default 64 to ≥128,
+  (c) enable Montserrat 12/16/24 fonts (the demo uses them),
+  (d) `lv_demo_benchmark_set_end_cb` takes `void(*)(const lv_demo_benchmark_summary_t*)`, NOT `void(*)(void)` — easy mis-write.
+  A "drop-in LVGL demo" recipe in the skill would save iteration time.
+- **Workaround**: see commit c87b131 sdkconfig.defaults + main.c for working template.
+- **Priority**: medium
+
+### FB-009 (2026-04-29)
+- **Skill**: tmux-multi-shell
+- **Category**: improvement
+- **Summary**: `capture-pane -p -S -1000` truncates very long ESP-IDF build output (≥1800 lines)
+- **Detail**: A clean ESP-IDF build with LVGL has 1835 ninja steps. `-S -1000` only shows the tail. Skill should recommend `-S -3000` minimum for ESP-IDF + LVGL builds, or write to file (`-S - > /tmp/build.log`) for forensic analysis on failure.
+- **Workaround**: `tmux capture-pane -t SESS:WIN -p -S -8000` for first-time LVGL builds; `-S -3000` for incremental.
+- **Priority**: low
