@@ -238,11 +238,12 @@ esp32-display-qemu-demo/
 │   ├── run-qemu.sh             # boot QEMU + 10-check verify
 │   ├── start-demo.sh           # one-click: build + boot + verify
 │   ├── decode-fb.py            # FB log → PNG (RGB565 → RGB888)
-│   ├── build-qemu.sh           # (future) build qemu from chinawrj/qemu fork
+│   ├── build-qemu.sh           # build qemu-system-xtensa from chinawrj/qemu fork
 │   └── fb_server/              # Phase-1 Chrome FB bridge (WS + static HTTP)
 ├── web/                        # Canvas viewer for the FB bridge
 │   ├── index.html
-│   ├── main.js
+│   ├── main.js                 # FB decode + WS client + pointer wiring
+│   ├── sidepanel.js            # super-sim panels (Wi-Fi/system/logs/screenshot)
 │   └── style.css
 ├── tests/
 │   ├── conftest.py             # session fixture: reuse log or boot QEMU once
@@ -252,8 +253,10 @@ esp32-display-qemu-demo/
 │   └── cdp/                    # Playwright/CDP browser-driven UI tests
 ├── docs/
 │   ├── screenshot.png          # committed baseline (this README's hero image)
-│   └── m4-day6-serial.log      # trimmed serial log proving 10/10 verify
-├── requirements.txt            # Python deps (Pillow)
+│   ├── m4-day6-serial.log      # trimmed serial log proving 10/10 verify
+│   ├── qemu-native-fb.md       # Phase-5 investigation: native QEMU FB bridge
+│   └── realtime-push.md        # Phase-2b design: live push (chardev/TCP/shmem)
+├── requirements.txt            # Python deps (Pillow, websockets, aiohttp, playwright)
 └── .copilot/docs/skill-feedback.md   # iterative skill improvements log
 ```
 
