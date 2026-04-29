@@ -122,3 +122,27 @@
 - **Detail**: When grepping `tmux capture-pane -S -3000` for FAILED/error, output from a previous (failed) build remains in scroll history and gets matched. Sentinel-based exit-code detection (`__BUILD_EXIT_$?__`) is the only reliable signal, not text grep. Skill already advocates sentinels but should explicitly warn against grep-based status checks.
 - **Workaround**: always trust sentinel exit code, treat grep matches as advisory only.
 - **Priority**: low
+
+### FB-013 (2026-04-29)
+- **Skill**: project-scaffolding / environment-setup
+- **Category**: missing-feature
+- **Summary**: Project lacked `requirements.txt` + venv bootstrap docs from day 1.
+- **Detail**: Day 5 was the first time we used Python tooling (Pillow). Had to create `.venv` and `requirements.txt` ad-hoc. Should be part of initial scaffold so all agents know where Python deps belong.
+- **Workaround**: Created `requirements.txt` and committed; added Pillow 12.2.0.
+- **Priority**: medium
+
+### FB-014 (2026-04-29)
+- **Skill**: tmux-multi-shell
+- **Category**: bug
+- **Summary**: Long sentinel strings can be wrapped by tmux at column boundary, splitting the marker.
+- **Detail**: Sent `__RUN_1777428138___EXIT_$?` and tmux line-wrapped it as `__RUN_1777428138___\nEXIT_0`. grep for the joined form fails. Mitigation: prefer compact sentinels (≤16 chars including suffix) or grep with multiline awareness.
+- **Workaround**: Fell back to checking command output file existence + size + exit-code-via-`__SENTINEL_EXIT_N` substring.
+- **Priority**: low
+
+### FB-015 (2026-04-29)
+- **Skill**: automated-testing
+- **Category**: improvement
+- **Summary**: RGB565 LE → RGB888 needs bit-replication, not naive shift, to match LVGL's reference output.
+- **Detail**: Day 4's quick decoder used `(r5 << 3)` (zero-fills LSBs); proper conversion is `(r5 << 3) | (r5 >> 2)` to preserve full 0..255 range. Diff was max 7 / mean 3.5 per channel — visually identical but byte-mismatch breaks any visual-regression hash test. Document the canonical conversion in the skill.
+- **Workaround**: Decoder uses bit-replication; baseline screenshot regenerated from this.
+- **Priority**: medium
