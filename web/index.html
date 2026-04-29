@@ -15,7 +15,39 @@
     </div>
   </header>
   <main>
-    <canvas id="fb" width="240" height="135"></canvas>
+    <section class="display">
+      <canvas id="fb" width="240" height="135"></canvas>
+    </section>
+    <aside class="sidepanel" id="sidepanel">
+      <details open>
+        <summary>Wi-Fi</summary>
+        <dl class="kv">
+          <dt>state</dt><dd id="wifi-state">—</dd>
+          <dt>SSID</dt><dd id="wifi-ssid">—</dd>
+          <dt>IP</dt><dd id="wifi-ip">—</dd>
+          <dt>RSSI</dt><dd id="wifi-rssi">—</dd>
+        </dl>
+      </details>
+      <details open>
+        <summary>System</summary>
+        <dl class="kv">
+          <dt>heap free</dt><dd id="sys-heap">—</dd>
+          <dt>uptime</dt><dd id="sys-uptime">—</dd>
+          <dt>tasks</dt><dd id="sys-tasks">—</dd>
+        </dl>
+      </details>
+      <details open>
+        <summary>Logs <button type="button" id="logs-clear" class="mini">clear</button></summary>
+        <ul id="logs" class="logs" aria-live="polite"></ul>
+      </details>
+      <details>
+        <summary>Controls</summary>
+        <div class="controls">
+          <button type="button" id="btn-screenshot">Screenshot</button>
+          <button type="button" id="btn-reset">Reset (stub)</button>
+        </div>
+      </details>
+    </aside>
   </main>
   <footer>
     <code id="last-update">no updates yet</code>

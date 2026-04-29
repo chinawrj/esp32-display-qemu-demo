@@ -150,7 +150,7 @@ Key numbers:
 
 ```bash
 source .venv/bin/activate
-pytest                                   # 31 tests, ~22 s warm / ~80 s cold
+pytest                                   # 34 tests, ~26 s warm / ~80 s cold
 ```
 
 The suite reuses `/tmp/esp32-qemu-serial.log` if it's < 30 minutes old; otherwise
@@ -206,6 +206,24 @@ The server logs each event and keeps a 256-entry ring buffer accessible at
 `GET /api/touches` (Playwright tests use this to assert click → server
 round-trip works). Wiring those events into a real LVGL `indev` driver in
 firmware is the next step under `cdp-phase3-touch-input`.
+
+### Super-sim side panel (Phase-6)
+
+Beside the framebuffer, the page hosts collapsible side-panels for **Wi-Fi**
+state, **System** counters (heap / uptime / tasks), a scrolling **Logs** view,
+and a **Controls** group with a one-click **Screenshot** button (saves the
+current canvas as PNG). Panels stay empty until the server pushes new frame
+types over the existing WebSocket — the format is intentionally extensible:
+
+```json
+{"type":"telemetry","wifi":{"state":"STA_GOT_IP","ip":"10.0.0.7","rssi":-45},
+                    "sys":{"heap":123456,"uptime":42,"tasks":17}}
+{"type":"log","level":"W","tag":"wifi","msg":"weak signal"}
+```
+
+Older servers that only emit `fb_init` / `fb_update` keep working unchanged.
+A test hook `window.__superSim` exposes `applyTelemetry` / `appendLog` so
+Playwright can drive the panels without round-tripping a WebSocket.
 
 ---
 

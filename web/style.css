@@ -17,9 +17,46 @@ header h1 { font-size: 14px; font-weight: 600; color: #fff; }
 .status.connected  { background: #353; color: #efe; }
 .status.error      { background: #533; color: #fee; }
 main {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  padding: 20px; background: #111;
+  flex: 1; display: flex; align-items: stretch; justify-content: center;
+  padding: 20px; background: #111; gap: 16px;
 }
+.display {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  min-width: 0;
+}
+.sidepanel {
+  width: 280px; flex: 0 0 280px;
+  background: #1f1f28; border: 1px solid #333; border-radius: 4px;
+  padding: 8px; font-size: 12px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.sidepanel details {
+  background: #24242e; border: 1px solid #2e2e3a; border-radius: 3px;
+  padding: 6px 8px;
+}
+.sidepanel summary {
+  cursor: pointer; font-weight: 600; color: #cfcfe0;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.kv { margin-top: 6px; display: grid; grid-template-columns: 80px 1fr; gap: 2px 8px; }
+.kv dt { color: #888; }
+.kv dd { color: #ddd; font-family: 'SF Mono', Menlo, monospace; }
+.logs {
+  margin-top: 6px; list-style: none; max-height: 180px; overflow-y: auto;
+  font-family: 'SF Mono', Menlo, monospace; font-size: 11px;
+  background: #16161c; border: 1px solid #2a2a36; padding: 4px;
+}
+.logs li { padding: 1px 2px; }
+.logs li.log-W { color: #fc6; }
+.logs li.log-E { color: #f88; }
+.logs li.log-I { color: #cfd; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.controls button, .mini {
+  background: #353548; color: #ddd; border: 1px solid #4a4a60;
+  padding: 4px 10px; border-radius: 3px; cursor: pointer; font-size: 11px;
+}
+.mini { padding: 1px 6px; }
+.controls button:hover, .mini:hover { background: #45455a; }
 canvas {
   border: 1px solid #444;
   image-rendering: pixelated;
