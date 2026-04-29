@@ -53,7 +53,7 @@ def moving_rect_frames(
     y = (height - rect_h) // 2
     bg_block = solid_rect(rect_w, rect_h, bg)
     fg_block = solid_rect(rect_w, rect_h, fg)
-    period = 1.0 / fps
+    period = 1.0 / fps if fps > 0 else 0.0
 
     prev_x = x
     while True:
@@ -69,4 +69,5 @@ def moving_rect_frames(
         elif x <= 0:
             x = 0
             direction = 1
-        time.sleep(period)
+        if period > 0:
+            time.sleep(period)

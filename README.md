@@ -150,7 +150,7 @@ Key numbers:
 
 ```bash
 source .venv/bin/activate
-pytest                                   # 27 tests, ~22 s warm / ~80 s cold
+pytest                                   # 31 tests, ~22 s warm / ~80 s cold
 ```
 
 The suite reuses `/tmp/esp32-qemu-serial.log` if it's < 30 minutes old; otherwise
@@ -192,6 +192,20 @@ Mode (b) parses the same `<<<FB_BEGIN ... FB= ... FB_END>>>` block that
 will render directly in Chrome. Real-time push from a live `flush_cb` (TCP /
 QEMU chardev / shared-memory) is the next milestone — log-replay is the
 zero-firmware-change first step that proves the pipeline end-to-end.
+
+### Touch input (Phase-3 host slice)
+
+The Chrome canvas captures pointer events (mouse / touch / pen) and sends
+structured JSON over the same WebSocket:
+
+```json
+{"type":"touch","event":"down","x":120,"y":68,"id":0}
+```
+
+The server logs each event and keeps a 256-entry ring buffer accessible at
+`GET /api/touches` (Playwright tests use this to assert click → server
+round-trip works). Wiring those events into a real LVGL `indev` driver in
+firmware is the next step under `cdp-phase3-touch-input`.
 
 ---
 

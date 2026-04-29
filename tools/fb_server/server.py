@@ -13,8 +13,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import sys
+from collections import deque
 from pathlib import Path
 
 import websockets
@@ -28,6 +30,20 @@ LOG = logging.getLogger("fb_server")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = PROJECT_ROOT / "web"
 
+# Phase-3 host slice: ring buffer of recent touch events from connected
+# Chrome clients. Exposed over HTTP at /api/touches for Playwright tests
+# and host-side debugging until the firmware-side LVGL indev is wired up.
+TOUCH_RING_MAX = 256
+TOUCH_RING: "deque[dict]" = deque(maxlen=TOUCH_RING_MAX)
+
+
+def record_touch(msg: dict, peer: str | None = None) -> None:
+    entry = {**msg, "peer": peer}
+    TOUCH_RING.append(entry)
+    LOG.info("touch %s (%s,%s) id=%s peer=%s",
+             msg.get("event"), msg.get("x"), msg.get("y"),
+             msg.get("id"), peer)
+
 
 async def fake_producer_loop(ws, width: int, height: int, fps: float) -> None:
     """Send fb_init then a stream of fb_update messages until the client disconnects."""
@@ -38,12 +54,17 @@ async def fake_producer_loop(ws, width: int, height: int, fps: float) -> None:
     await ws.send(clear.header_json())
     await ws.send(clear.payload)
 
-    frames = moving_rect_frames(width=width, height=height, fps=fps)
+    # fps=0 disables the generator's internal sleep so the asyncio loop can
+    # service receiver_loop / HTTP handlers between frames.
+    period = 1.0 / fps if fps > 0 else 0.0
+    frames = moving_rect_frames(width=width, height=height, fps=0.0)
     try:
         for update in frames:
             update.validate()
             await ws.send(update.header_json())
             await ws.send(update.payload)
+            if period > 0:
+                await asyncio.sleep(period)
     except websockets.ConnectionClosed:
         LOG.info("client %s disconnected", ws.remote_address)
 
@@ -63,17 +84,41 @@ async def log_producer_loop(ws, log_path: Path, period_s: float) -> None:
              ws.remote_address, init.width, init.height)
 
     try:
-        for update in replay_frames(frames, period_s=period_s):
+        # period_s=0 disables generator sleep; we use asyncio.sleep instead.
+        for update in replay_frames(frames, period_s=0.0):
             update.validate()
             await ws.send(update.header_json())
             await ws.send(update.payload)
+            if period_s > 0:
+                await asyncio.sleep(period_s)
     except websockets.ConnectionClosed:
         LOG.info("client %s disconnected", ws.remote_address)
+
+
+async def receiver_loop(ws) -> None:
+    """Drain incoming text messages from the client. Recognises {type:'touch',...}."""
+    peer = f"{ws.remote_address[0]}:{ws.remote_address[1]}" if ws.remote_address else None
+    try:
+        async for raw in ws:
+            if not isinstance(raw, str):
+                continue
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                LOG.warning("bad json from %s: %s", peer, raw[:120])
+                continue
+            if msg.get("type") == "touch":
+                record_touch(msg, peer)
+            else:
+                LOG.debug("unknown client msg from %s: %s", peer, msg.get("type"))
+    except websockets.ConnectionClosed:
+        pass
 
 
 def make_ws_handler(args: argparse.Namespace):
     async def handler(ws):
         LOG.info("client connected: %s", ws.remote_address)
+        recv_task = asyncio.create_task(receiver_loop(ws))
         try:
             if args.source == "log":
                 period = 1.0 / args.fps if args.fps > 0 else 1.0
@@ -82,12 +127,26 @@ def make_ws_handler(args: argparse.Namespace):
                 await fake_producer_loop(ws, args.width, args.height, args.fps)
         except Exception as exc:  # pragma: no cover — visibility on bugs
             LOG.exception("producer crashed: %s", exc)
+        finally:
+            recv_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await recv_task
 
     return handler
 
 
 async def serve_static(http_host: str, http_port: int) -> web.AppRunner:
     app = web.Application()
+
+    async def touches_handler(_request):
+        return web.json_response({"touches": list(TOUCH_RING)})
+
+    async def touches_clear(_request):
+        TOUCH_RING.clear()
+        return web.json_response({"ok": True})
+
+    app.router.add_get("/api/touches", touches_handler)
+    app.router.add_post("/api/touches/clear", touches_clear)
     app.router.add_static("/", path=str(WEB_DIR), show_index=True, follow_symlinks=False)
     runner = web.AppRunner(app)
     await runner.setup()

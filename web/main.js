@@ -13,6 +13,52 @@ const statusEl = document.getElementById('status');
 const resolutionEl = document.getElementById('resolution');
 const fpsEl = document.getElementById('fps');
 const lastUpdateEl = document.getElementById('last-update');
+const lastTouchEl = document.getElementById('last-touch');
+
+// Touch / pointer wiring (Phase-3 host slice) -------------------------------
+// Translates a CSS-pixel pointer event into device-pixel canvas coordinates
+// and sends a JSON message over the active WebSocket. Firmware-side LVGL
+// indev integration is a follow-up (cdp-phase3 firmware milestone).
+let activeWs = null;
+
+function pointerToCanvas(ev) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / rect.width;
+  const sy = canvas.height / rect.height;
+  return {
+    x: Math.max(0, Math.min(canvas.width  - 1, Math.round((ev.clientX - rect.left) * sx))),
+    y: Math.max(0, Math.min(canvas.height - 1, Math.round((ev.clientY - rect.top)  * sy))),
+  };
+}
+
+function sendTouch(event, ev) {
+  if (!activeWs || activeWs.readyState !== 1) return;
+  const { x, y } = pointerToCanvas(ev);
+  const msg = { type: 'touch', event, x, y, id: ev.pointerId ?? 0 };
+  activeWs.send(JSON.stringify(msg));
+  lastTouchEl.textContent = `last touch: ${event} (${x},${y})`;
+}
+
+function attachPointerHandlers() {
+  let down = false;
+  canvas.addEventListener('pointerdown', ev => {
+    down = true;
+    canvas.setPointerCapture(ev.pointerId);
+    sendTouch('down', ev);
+  });
+  canvas.addEventListener('pointermove', ev => {
+    if (down) sendTouch('move', ev);
+  });
+  const up = ev => {
+    if (!down) return;
+    down = false;
+    sendTouch('up', ev);
+  };
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('pointerleave', up);
+}
+attachPointerHandlers();
 
 // FPS counter ---------------------------------------------------------------
 let frameCount = 0;
@@ -83,10 +129,12 @@ function connect() {
   setStatus('connecting', `connecting to ${wsUrl}…`);
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
+  activeWs = ws;
 
   ws.addEventListener('open', () => setStatus('connected', `connected ${wsUrl}`));
   ws.addEventListener('error', () => setStatus('error', 'WebSocket error'));
   ws.addEventListener('close', () => {
+    if (activeWs === ws) activeWs = null;
     setStatus('error', 'disconnected — reconnect in 2 s');
     setTimeout(connect, 2000);
   });
