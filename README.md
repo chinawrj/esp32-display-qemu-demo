@@ -1,257 +1,217 @@
 # esp32-display-qemu-demo
 
-🎨 **Run LVGL UI on ESP32 QEMU Emulator — No Hardware Required**
-
-A project to develop and test ESP32 display interfaces using the official QEMU emulator, featuring LVGL (Light and Versatile Graphics Library) for modern, lightweight UI rendering.
-
-## 🎯 Project Goals
-
-- ✅ Build and compile ESP32 firmware without real hardware
-- ✅ Run LVGL UI demos on QEMU emulator
-- ✅ Verify display rendering through QEMU framebuffer
-- ✅ Create reproducible development environment
-- ✅ Implement automated testing pipeline
-
-## 📋 Prerequisites
-
-### Required
-
-- **macOS/Linux**: Development machine
-- **ESP-IDF v5.5+**: [Install Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
-- **QEMU**: `qemu-system-xtensa` emulator
-- **Python 3.10+**: For build tools
-- **tmux**: For multi-window terminal management
-
-### Optional
-
-- **VS Code**: With MCP servers configured (see `.vscode/mcp.json`)
-- **Patchright**: For browser automation testing
-
-## 🚀 Quick Start
-
-### 1. Setup Environment
-
-```bash
-cd esp32-display-qemu-demo
-
-# Activate environment
-source .env.sh
-
-# First time: install Python venv
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 2. Build Hello World
-
-```bash
-# Set ESP32 as target
-idf.py set-target esp32
-
-# Compile
-idf.py build
-
-# Verify: check build/esp32-display-qemu-demo.elf
-ls -lh build/*.elf
-```
-
-### 3. Run on QEMU
-
-```bash
-# In tmux or terminal
-qemu-system-xtensa \
-  -machine esp32 \
-  -drive file=build/esp32-display-qemu-demo.bin,if=mtd,format=raw \
-  -nographic \
-  -serial mon:stdio
-```
-
-### 4. Watch Serial Output
-
-You should see logs like:
-```
-I (0) cpu_start: ESP-IDF v5.5.4-dirty 2nd stage bootloader
-I (24) boot: Chip is ESP32 (revision v1.0)
-...
-I (342) app_main: ========================================
-I (342) app_main: esp32-display-qemu-demo starting...
-I (343) app_main: ========================================
-```
-
-## 📁 Project Structure
-
-```
-esp32-display-qemu-demo/
-├── CMakeLists.txt              # Top-level ESP-IDF build config
-├── main/
-│   ├── CMakeLists.txt         # Main component build config
-│   ├── main.c                 # Application entry point
-│   └── include/               # Header files
-├── frontend/
-│   ├── index.html             # Web interface (future)
-│   └── style.css
-├── tools/
-│   ├── setup-idf.sh           # ESP-IDF environment setup
-│   ├── build-script.sh        # Build automation
-│   └── qemu-run.sh            # QEMU execution helper
-├── tests/
-│   ├── test_serial.py         # Serial output validation
-│   └── test_qemu.py           # QEMU integration tests
-├── docs/
-│   └── daily-logs/            # Daily development logs
-├── build/                      # Generated build artifacts
-├── .env.sh                     # Environment loader
-├── sdkconfig                   # Current build config
-├── sdkconfig.defaults          # Default configuration
-└── README.md                   # This file
-```
-
-## 🛠️ Development Workflow
-
-### Daily Development Loop
-
-```bash
-# 1. Start tmux session
-tmux attach-session -t esp32-display-qemu-demo
-
-# 2. In 'edit' window: modify code
-# 3. In 'build' window: compile
-idf.py build
-
-# 4. In 'monitor' window: run QEMU and monitor
-qemu-system-xtensa -machine esp32 -drive file=build/*.bin,if=mtd -nographic -serial mon:stdio
-
-# 5. Check output for errors/logs
-```
-
-### Build Commands
-
-```bash
-# Clean rebuild
-idf.py fullclean
-idf.py build
-
-# Configure with menuconfig
-idf.py menuconfig
-
-# Set different target
-idf.py set-target esp32s3
-
-# Monitor serial output
-idf.py monitor
-```
-
-## 📊 Milestones
-
-| Milestone | Status | Objectives |
-|-----------|--------|-----------|
-| M1: Environment | 🔄 In Progress | ✅ Setup ESP-IDF, ✅ Create Hello World, ✅ Initialize tmux |
-| M2: LVGL Integration | ⏳ Pending | Add LVGL component, configure display, compile |
-| M3: LVGL Demo | ⏳ Pending | Integrate demo app, render on QEMU, create startup script |
-| M4: Testing & Docs | ⏳ Pending | Automated tests, code refactor, finalize documentation |
-
-## 🧪 Testing
-
-### Serial Output Verification
-
-```bash
-# Test: Wait for specific log message
-idf.py monitor | grep -m 1 "app_main.*started"
-```
-
-### Automated Tests
-
-```bash
-source .venv/bin/activate
-
-# Run all tests
-pytest tests/
-
-# Run specific test
-pytest tests/test_qemu.py::test_qemu_boot
-```
-
-## 📝 Logging
-
-The application uses ESP-IDF's standard logging system:
-
-```c
-#include "esp_log.h"
-
-static const char *TAG = "my_component";
-
-ESP_LOGI(TAG, "Hello %s", "World");   // Info
-ESP_LOGW(TAG, "Warning message");      // Warning
-ESP_LOGE(TAG, "Error occurred");       // Error
-```
-
-### Log Levels
-
-Set in menuconfig: `Component config` → `Log output` → `Default log verbosity`
-
-- **Error**: Only errors (minimal output)
-- **Warn**: Warnings and errors
-- **Info**: General info (default)
-- **Debug**: Detailed debugging
-- **Verbose**: Maximum detail
-
-## 🐛 Troubleshooting
-
-### Build Fails: "esp_log not found"
-
-**Solution**: Ensure CMakeLists.txt doesn't explicitly require unavailable components.
-
-```cmake
-# ❌ WRONG
-idf_component_register(REQUIRES esp_log esp_system)
-
-# ✅ CORRECT - Let ESP-IDF link automatic deps
-idf_component_register()
-```
-
-### QEMU Not Found
-
-```bash
-# Check QEMU installation
-which qemu-system-xtensa
-qemu-system-xtensa --version
-
-# Install QEMU
-brew install qemu  # macOS
-apt install qemu-system-misc  # Linux
-```
-
-### Python Module Not Found
-
-```bash
-# Ensure venv is activated
-source .venv/bin/activate
-
-# Reinstall requirements
-pip install -r requirements.txt
-```
-
-## 📚 Resources
-
-- [ESP-IDF Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/)
-- [LVGL Documentation](https://docs.lvgl.io/)
-- [QEMU Xtensa Support](https://wiki.qemu.org/System/Targets/Xtensa)
-- [ESP32 Datasheet](https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf)
-
-## 📜 License
-
-This project is part of the ESP32-QEMU learning initiative. See LICENSE file for details.
-
-## 📞 Support
-
-For issues or questions:
-
-1. Check daily logs in `docs/daily-logs/`
-2. Review troubleshooting section above
-3. Consult ESP-IDF documentation
-4. Check QEMU emulator documentation
+Run an LVGL benchmark on the official **ESP32 QEMU emulator** — no real hardware
+required — and capture a real, reproducible screenshot from the device
+framebuffer over UART.
+
+![LVGL benchmark on ESP32 QEMU, captured from the device framebuffer](docs/screenshot.png)
+
+> Above: actual LVGL `lv_demo_benchmark` frame rendered inside QEMU at 240×135
+> (RGB565), captured via UART base64 dump and decoded back to PNG on the host.
+> The dimming overlay in the corner is the LVGL `LV_USE_PERF_MONITOR` widget.
 
 ---
 
-**Last Updated**: 2026-04-29  
-**Status**: Active Development (M1 in progress)
+## Why
+
+Embedded UI work normally needs the physical display attached. This project
+shows a fully self-contained loop:
+
+1. **Build** an ESP-IDF firmware that boots LVGL with a 240×135 RGB565 display.
+2. **Run** it in QEMU's `xtensa` machine — fully headless.
+3. **Capture** a single LVGL framebuffer over UART as base64.
+4. **Decode** the base64 stream back to a PNG on the host.
+5. **Verify** with a 10-check assertion harness so a green run is provable in CI.
+
+Everything is driven by two scripts:
+
+```bash
+bash tools/run-qemu.sh 45 verify        # boots QEMU, runs ~7s, verifies, dumps log
+python3 tools/decode-fb.py /tmp/esp32-qemu-serial.log docs/screenshot.png --scale 4
+```
+
+---
+
+## Prerequisites
+
+### macOS (tested)
+
+```bash
+brew install pixman libgcrypt sdl2 tmux
+```
+
+### ESP-IDF + QEMU
+
+This project targets **ESP-IDF v5.5+** with the prebuilt Espressif QEMU.
+
+```bash
+# 1. Install ESP-IDF (skip if you already have it)
+#    https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/
+
+# 2. Install the prebuilt qemu-xtensa via idf_tools
+python3 $IDF_PATH/tools/idf_tools.py install qemu-xtensa
+. $IDF_PATH/export.sh                   # makes idf.py + qemu-system-xtensa visible
+```
+
+### Project Python environment
+
+```bash
+cd esp32-display-qemu-demo
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt          # currently just Pillow for the decoder
+```
+
+---
+
+## Quickstart
+
+```bash
+. $IDF_PATH/export.sh
+source .venv/bin/activate
+
+idf.py set-target esp32                  # one time
+idf.py build                             # ~60 s clean / ~5 s incremental
+
+bash tools/run-qemu.sh 45 verify         # boots, captures FB, verifies (10/10)
+python3 tools/decode-fb.py /tmp/esp32-qemu-serial.log /tmp/shot.png --scale 4
+open /tmp/shot.png                       # macOS
+```
+
+Expected verify output:
+
+```
+[run-qemu] === Verification ===
+  ✅ app_main reached
+  ✅ lvgl initialized log
+  ✅ lvgl display created
+  ✅ lvgl flush callback fired
+  ✅ demo started
+  ✅ demo rendered ≥30 flushes (≥1s)
+  ✅ framebuffer capture begin marker
+  ✅ framebuffer capture end marker
+  ✅ demo completion banner
+  ✅ framebuffer payload size  (1440 base64 lines, expected 1440)
+[run-qemu] Result: 10 passed, 0 failed
+```
+
+A one-shot wrapper is also available:
+
+```bash
+bash tools/start-demo.sh                 # full: build + boot + verify
+bash tools/start-demo.sh quick           # skip build
+```
+
+---
+
+## How the screenshot pipeline works
+
+```
+  ┌──────────────┐    flush_cb #80    ┌──────────────────────┐
+  │   LVGL       │ ─────────────────▶ │ dump_framebuffer_     │
+  │   benchmark  │  (RGB565, 64.8 KB) │ base64()              │
+  └──────────────┘                    └─────────┬────────────┘
+                                                │ <<<FB_BEGIN size=64800 …>>>
+                                                │ FB=<base64 line × 1440>
+                                                │ <<<FB_END>>>
+                                                ▼
+  ┌──────────────────────┐    UART    ┌──────────────────────┐
+  │ tools/run-qemu.sh    │ ─────────▶ │ /tmp/esp32-qemu-      │
+  │ (10-check verify)    │            │ serial.log            │
+  └──────────────────────┘            └─────────┬────────────┘
+                                                │
+                                                ▼
+                              ┌────────────────────────────────┐
+                              │ tools/decode-fb.py             │
+                              │   - parse FB_BEGIN/END markers │
+                              │   - base64-decode payload      │
+                              │   - RGB565 LE → RGB888         │
+                              │     (bit-replication)          │
+                              │   - PIL Image.save("PNG")      │
+                              └────────────────┬───────────────┘
+                                               ▼
+                                       docs/screenshot.png
+```
+
+Key numbers:
+
+| Item | Value |
+|---|---|
+| Display | 240 × 135 RGB565 (64 800 bytes) |
+| Capture frame | flush #80 (mid-benchmark) |
+| Base64 lines | 1 440 (60 chars each, prefixed `FB=`) |
+| Verify duration | ~7 s of QEMU + ~6 s UART drain → use `45 s` timeout |
+| Binary | 776 KB / 1 024 KB partition (76 %) |
+
+---
+
+## Project structure
+
+```
+esp32-display-qemu-demo/
+├── main/
+│   └── main.c                  # LVGL init + benchmark + FB capture (150 lines)
+├── sdkconfig.defaults          # LVGL config (incl. LV_USE_SYSMON + PERF_MONITOR)
+├── tools/
+│   ├── run-qemu.sh             # boot QEMU + 10-check verify
+│   ├── start-demo.sh           # one-click: build + boot + verify
+│   ├── decode-fb.py            # FB log → PNG (RGB565 → RGB888)
+│   └── build-qemu.sh           # (future) build qemu from chinawrj/qemu fork
+├── docs/
+│   ├── screenshot.png          # committed baseline (this README's hero image)
+│   └── m4-day6-serial.log      # trimmed serial log proving 10/10 verify
+├── requirements.txt            # Python deps (Pillow)
+└── .copilot/docs/skill-feedback.md   # iterative skill improvements log
+```
+
+---
+
+## Troubleshooting
+
+**`region 'dram0_0_seg' overflowed by N bytes`**
+A 64 KB framebuffer in `.bss` exceeds ESP32's DRAM segment. The framebuffer is
+allocated at runtime via `heap_caps_malloc(MALLOC_CAP_8BIT)` to avoid this. If
+you add more globals, watch the link error closely.
+
+**Screenshot is solid orange (single colour)**
+LVGL hasn't drawn benchmark content yet at the capture frame. Bump
+`CAPTURE_FLUSH_INDEX` in `main/main.c` (currently `80`).
+
+**"LV_USE_PERF_MONITOR is not enabled" banner appears**
+`LV_USE_PERF_MONITOR` is gated on `LV_USE_SYSMON` in LVGL's `lv_conf_internal.h`.
+Both must be set in `sdkconfig.defaults`. Already configured here — only relevant
+if you fork the config.
+
+**`qemu-system-xtensa: command not found`**
+Run `python3 $IDF_PATH/tools/idf_tools.py install qemu-xtensa` and re-source
+`$IDF_PATH/export.sh`. The binary lands under
+`~/.espressif/tools/qemu-xtensa/<version>/qemu/bin/`.
+
+**`bash tools/run-qemu.sh` reports 9 / 10 passed**
+Most often an old `/tmp/esp32-qemu-serial.log` was reused. The script overwrites
+it on each run; if it's locked by another process, kill stale `qemu-system-xtensa`
+processes (`ps aux | grep qemu-system-xtensa`) and re-run.
+
+---
+
+## Roadmap
+
+| Milestone | Status | Highlights |
+|---|---|---|
+| M1: Hello World on QEMU | ✅ Done | ESP-IDF boots in QEMU, tmux session set up |
+| M2: LVGL integration | ✅ Done | `lvgl__lvgl` component, RGB565 display, flush_cb |
+| M3: Benchmark demo | ✅ Done | `lv_demo_benchmark` + `start-demo.sh` wrapper |
+| M4: Framebuffer capture & verify | ✅ Done | UART base64 dump, host decoder, baseline PNG |
+| M5: Local-built QEMU | ⏳ Pending | `tools/build-qemu.sh` scaffolded for `chinawrj/qemu` fork |
+| M6: Chrome super-simulator | ⏳ Pending | WebSocket FB bridge → Canvas → CDP/Playwright tests |
+
+The Chrome super-simulator (M6) will replace the UART screenshot path with a
+real-time WebSocket framebuffer push, displayed in a Chrome page that doubles as
+the debug surface for QEMU peripherals (Display, Wi-Fi, BLE, UART, FreeRTOS
+state) and is automatable via Chrome DevTools Protocol.
+
+---
+
+## License
+
+See `LICENSE` for details.
