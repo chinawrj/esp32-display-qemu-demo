@@ -10,6 +10,14 @@
 #
 # Prerequisites (macOS, brew):
 #   brew install pixman glib ninja pkg-config libgcrypt sdl2
+#
+# IMPORTANT — host toolchain requirements:
+#   * Clang ≥ 15 (XCode ≥ 15) OR GCC ≥ 7.4 — QEMU 9.2 enforces this.
+#     Older XCode CommandLineTools (e.g. clang 14) will fail meson setup
+#     with: "You either need GCC v7.4 or Clang v10.0 (or XCode Clang v15.0)"
+#     Fix: `softwareupdate --install --all`, or install full XCode from the
+#     App Store, then `sudo xcode-select -s /Applications/Xcode.app`.
+#   * Python with `distlib` available — script auto-uses the project .venv.
 
 set -eo pipefail
 
@@ -57,7 +65,16 @@ if [ ! -f build/build.ninja ]; then
   echo "[build-qemu] configuring..."
   mkdir -p build
   cd build
-  ../configure \
+  # QEMU 9.2.x's mkvenv.py needs the `distlib` module. Python 3.14 in
+  # Homebrew is PEP-668 EXTERNALLY-MANAGED so we point configure at the
+  # project venv (which has distlib installed via requirements).
+  PROJECT_VENV_PY="$(cd "$SRC_DIR/../.." && pwd)/.venv/bin/python3"
+  PY_FLAG=""
+  if [ -x "$PROJECT_VENV_PY" ]; then
+    PY_FLAG="--python=${PROJECT_VENV_PY}"
+    echo "[build-qemu] using python: $PROJECT_VENV_PY"
+  fi
+  ../configure $PY_FLAG \
     --target-list=xtensa-softmmu \
     --enable-gcrypt \
     --enable-sdl \
