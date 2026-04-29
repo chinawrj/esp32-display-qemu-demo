@@ -32,6 +32,13 @@ if [ -z "${IDF_PATH:-}" ]; then
 fi
 
 echo "[run-qemu] Booting QEMU for ${DURATION}s, log -> ${LOG_FILE}"
+# idf.py needs the ESP-IDF python (with `click` etc.); a project .venv on PATH
+# shadows it. Strip the venv so the IDF environment wins.
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+    PATH="$(echo "$PATH" | tr ':' '\n' | grep -vF "$VIRTUAL_ENV/bin" | paste -sd: -)"
+    export PATH
+    unset VIRTUAL_ENV PYTHONHOME 2>/dev/null || true
+fi
 # `idf.py qemu` (no --graphics) runs headless; serial output goes to stdio.
 QEMU_CMD="idf.py qemu --qemu-extra-args=-nographic"
 if command -v gtimeout >/dev/null 2>&1; then

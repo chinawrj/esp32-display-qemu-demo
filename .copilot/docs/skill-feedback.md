@@ -170,3 +170,18 @@
 - **Detail**: First QEMU build attempt fired off a recursive shallow clone — by 4:30 it was still cloning EDK2's berkeley-softfloat-3 nested submodule. For target-list=xtensa-softmmu we only need dtc, keycodemapdb, and berkeley-softfloat-3 in subprojects/. Aborting and pruning saved >2 GB and avoided the runaway.
 - **Workaround**: tools/build-qemu.sh now clones without --recurse-submodules and selectively `git submodule update --init` only the needed paths.
 - **Priority**: medium
+
+### FB-019 (2026-04-29)
+- **Skill**: tools/run-qemu.sh
+- **Category**: bug
+- **Summary**: `idf.py qemu` fails when invoked with project `.venv` activated
+- **Detail**: `idf.py` shebang resolves to first python on PATH. With `.venv/bin` in PATH, it picks the project venv's python which lacks `click` etc., causing `idf.py qemu` to fail with "No module named 'click'". Cold-path `pytest` (which calls `bash tools/run-qemu.sh`) hit this 12/12.
+- **Workaround**: run-qemu.sh now strips `$VIRTUAL_ENV/bin` from PATH and unsets `VIRTUAL_ENV`/`PYTHONHOME` before invoking idf.py.
+- **Priority**: high (blocks any wrapper script that calls idf.py from a venv)
+
+### FB-020 (2026-04-29)
+- **Skill**: automated-testing
+- **Category**: improvement
+- **Summary**: Reuse expensive QEMU run across pytest session
+- **Detail**: Booting QEMU costs ~15 s wall-clock; running it per test is wasteful. Implemented in `tests/conftest.py`: session-scoped fixture reuses `/tmp/esp32-qemu-serial.log` if < 30 min old, supports `ESP32_QEMU_LOG` override for log-only testing (no boot needed). Result: warm pytest = 0.5 s, cold pytest = 47 s.
+- **Priority**: medium

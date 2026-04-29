@@ -145,6 +145,23 @@ Key numbers:
 
 ---
 
+## Testing
+
+```bash
+source .venv/bin/activate
+pytest                                   # 12 tests, ~1 s warm / ~50 s cold
+```
+
+The suite reuses `/tmp/esp32-qemu-serial.log` if it's < 30 minutes old; otherwise
+it boots QEMU once via `tools/run-qemu.sh`. Each of the 10 verify checks plus
+two end-to-end decoder tests appears as an individual pytest case so CI failures
+pinpoint the regression.
+
+Set `ESP32_QEMU_LOG=/path/to/log` to test against a captured log without
+booting QEMU at all.
+
+---
+
 ## Project structure
 
 ```
@@ -157,6 +174,10 @@ esp32-display-qemu-demo/
 │   ├── start-demo.sh           # one-click: build + boot + verify
 │   ├── decode-fb.py            # FB log → PNG (RGB565 → RGB888)
 │   └── build-qemu.sh           # (future) build qemu from chinawrj/qemu fork
+├── tests/
+│   ├── conftest.py             # session fixture: reuse log or boot QEMU once
+│   ├── test_qemu_boot.py       # 10 verify checks as parametrized pytest cases
+│   └── test_decoder.py         # decode-fb.py end-to-end (Pillow assertions)
 ├── docs/
 │   ├── screenshot.png          # committed baseline (this README's hero image)
 │   └── m4-day6-serial.log      # trimmed serial log proving 10/10 verify
