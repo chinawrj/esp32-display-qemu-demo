@@ -59,7 +59,8 @@ python3 $IDF_PATH/tools/idf_tools.py install qemu-xtensa
 cd esp32-display-qemu-demo
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt          # currently just Pillow for the decoder
+pip install -r requirements.txt          # Pillow, pytest, websockets, aiohttp, playwright
+playwright install chromium               # only needed for tests/cdp/ (≈100 MB)
 ```
 
 ---
@@ -149,14 +150,17 @@ Key numbers:
 
 ```bash
 source .venv/bin/activate
-pytest                                   # 17 tests, ~1 s warm / ~50 s cold
+pytest                                   # 21 tests, ~22 s warm / ~70 s cold
 ```
 
 The suite reuses `/tmp/esp32-qemu-serial.log` if it's < 30 minutes old; otherwise
 it boots QEMU once via `tools/run-qemu.sh`. Each of the 10 verify checks plus
 two end-to-end decoder tests appears as an individual pytest case so CI failures
 pinpoint the regression. `tests/fb_server/` adds 5 more tests covering the
-Chrome framebuffer bridge (protocol, server e2e, static HTTP).
+Chrome framebuffer bridge (protocol, server e2e, static HTTP). `tests/cdp/`
+drives a real headless Chromium via Playwright/CDP — it boots the bridge,
+opens the viewer page, asserts the canvas is connected and animating, and
+saves `artifacts/cdp-framebuffer.png` for inspection.
 
 Set `ESP32_QEMU_LOG=/path/to/log` to test against a captured log without
 booting QEMU at all.
@@ -202,7 +206,8 @@ esp32-display-qemu-demo/
 │   ├── conftest.py             # session fixture: reuse log or boot QEMU once
 │   ├── test_qemu_boot.py       # 10 verify checks as parametrized pytest cases
 │   ├── test_decoder.py         # decode-fb.py end-to-end (Pillow assertions)
-│   └── fb_server/              # protocol + server e2e tests
+│   ├── fb_server/              # protocol + server e2e tests
+│   └── cdp/                    # Playwright/CDP browser-driven UI tests
 ├── docs/
 │   ├── screenshot.png          # committed baseline (this README's hero image)
 │   └── m4-day6-serial.log      # trimmed serial log proving 10/10 verify

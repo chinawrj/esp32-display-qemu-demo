@@ -76,7 +76,10 @@ function setStatus(state, text) {
 }
 
 function connect() {
-  const wsUrl = `ws://${location.hostname || '127.0.0.1'}:7788`;
+  const params = new URLSearchParams(location.search);
+  const wsPort = params.get('ws') || '7788';
+  const wsHost = params.get('host') || location.hostname || '127.0.0.1';
+  const wsUrl = `ws://${wsHost}:${wsPort}`;
   setStatus('connecting', `connecting to ${wsUrl}…`);
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';

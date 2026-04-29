@@ -192,3 +192,17 @@
 - **Summary**: pytest needs `pythonpath = .` and `tools/__init__.py` for module-style imports
 - **Detail**: When tests import `from tools.fb_server.protocol import ...`, pytest must add the repo root to sys.path. Solution: add `pythonpath = .` to `pytest.ini` AND a stub `tools/__init__.py`. Without both, get `ModuleNotFoundError: No module named 'tools'` even though the dir exists.
 - **Priority**: medium
+
+### FB-022 (2026-04-29)
+- **Skill**: automated-testing
+- **Category**: improvement
+- **Summary**: Make hardcoded WS port overridable via URL query so CDP tests can use ephemeral ports
+- **Detail**: `web/main.js` originally hardcoded `ws://${host}:7788`. Playwright tests need ephemeral WS ports (parallel runs, CI port collisions). Added `?ws=<port>&host=<host>` query-param override; defaults preserved for normal browser use. Pattern: any frontend that talks to a backend should support env/query/config override of the endpoint URL from day one.
+- **Priority**: medium
+
+### FB-023 (2026-04-29)
+- **Skill**: automated-testing
+- **Category**: documentation
+- **Summary**: Playwright + pytest-playwright both needed; auto-fixtures conflict with custom subprocess fixtures
+- **Detail**: Installed `pytest-playwright` to register the plugin, but used `playwright.sync_api.sync_playwright()` directly inside a custom `browser_page` fixture instead of relying on the auto-injected `page` fixture. Reason: the auto fixture has session/function scoping that didn't compose well with our subprocess-spawning `fb_server` fixture. `playwright install chromium` is mandatory after pip install (~100 MB). Document this in any skill that adds browser-driven tests.
+- **Priority**: low
