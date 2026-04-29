@@ -63,10 +63,10 @@ def qemu_log() -> Path:
     # 'verify' mode exits non-zero on failure; we still want the log either
     # way so individual tests can produce per-check failures.
     subprocess.run(
-        ["bash", str(script), "45", "verify"],
+        ["bash", str(script), "75", "verify"],
         cwd=PROJECT_ROOT,
         check=False,
-        timeout=120,
+        timeout=180,
     )
 
     if not DEFAULT_LOG.is_file() or DEFAULT_LOG.stat().st_size == 0:

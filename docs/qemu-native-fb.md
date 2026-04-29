@@ -1,6 +1,7 @@
 # QEMU native framebuffer integration — investigation
 
-Status: design / research note for `cdp-phase5-qemu-native-fb`.
+Status: design / research note for `cdp-phase5-qemu-native-fb`. Host-side
+slice for `qemu-fb-shmem-bridge` landed Day 16 (see "Concrete next slice").
 
 ## Background
 
@@ -49,7 +50,7 @@ the user can't run our patched QEMU.
 Long-term: **`cdp-phase5-qemu-native-fb`** when a real ESP32 LCD model lands
 upstream. Track Espressif's QEMU roadmap; revisit when that materialises.
 
-## Concrete next slice (deferred)
+## Concrete next slice (host side: ✅ Day 16; QEMU device: deferred)
 
 Once a custom QEMU is up (Day 14 build):
 
@@ -59,7 +60,34 @@ Once a custom QEMU is up (Day 14 build):
 3. Host `fb_server` mmaps the same file and pushes dirty rects to Chrome
 4. Update `tools/run-qemu.sh` to add `-object memory-backend-file,...`
 
-Pseudo:
+### Wire format (frozen Day 16)
+
+```
+offset  size  field
+0       4     u32 LE  frame_seq      # monotonic; producer reads when this changes
+4       2     u16 LE  width          # pixels
+6       2     u16 LE  height         # pixels
+8       N     bytes   RGB565 LE pixels   # N == width * height * 2
+```
+
+The QEMU device patch (when written) and the firmware writer must match this
+header exactly. It's only 8 bytes so the device model stays trivial.
+
+### Implemented today (host side)
+
+`tools/fb_server/shmem_producer.py` (+ `tests/fb_server/test_shmem_producer.py`,
+7 cases passing) provides:
+
+* `pack_frame(seq, w, h, payload)` / `parse_frame(buf)` — symmetric writer/reader
+  helpers so a Python writer, a QEMU device, and the producer all agree on the
+  layout.
+* `read_latest(path)` — single-shot mmap read, returns `None` on missing /
+  truncated files.
+* `stream_frames(path, ...)` — polling generator that emits `(FBInit | None,
+  FBUpdate, payload)` tuples as new frames appear; re-emits `FBInit` on
+  resolution changes.
+
+End-to-end demo without QEMU:
 
 ```bash
 qemu-system-xtensa ... \
@@ -68,14 +96,20 @@ qemu-system-xtensa ... \
 ```
 
 ```python
-# tools/fb_server/shmem_producer.py (sketch)
-import mmap, os
-with open("/tmp/esp32-fb", "rb") as f:
-    mm = mmap.mmap(f.fileno(), 64 * 1024, prot=mmap.PROT_READ)
-    while True:
-        rgb565 = bytes(mm[:240*135*2])
-        yield FBUpdate(...)
+# Once the QEMU device patch lands, fb_server can stream live frames:
+from pathlib import Path
+from tools.fb_server.shmem_producer import stream_frames
+for init, upd, payload in stream_frames(Path("/tmp/esp32-fb")):
+    if init: ws.send_text(init.to_json())
+    ws.send_text(upd.header_json()); ws.send_bytes(payload)
 ```
+
+### Still deferred
+
+* QEMU device model (`hw/misc/esp32_fb.c` or similar) — the deep work.
+* Firmware MMIO writer in `flush_cb`.
+* Wiring `tools/run-qemu.sh`'s `-object memory-backend-file` flag once the
+  device exists.
 
 This entire investigation is preserved here so future workdays don't have to
 re-derive the trade-offs.
