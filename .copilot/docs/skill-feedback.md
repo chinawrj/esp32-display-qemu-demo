@@ -146,3 +146,27 @@
 - **Detail**: Day 4's quick decoder used `(r5 << 3)` (zero-fills LSBs); proper conversion is `(r5 << 3) | (r5 >> 2)` to preserve full 0..255 range. Diff was max 7 / mean 3.5 per channel — visually identical but byte-mismatch breaks any visual-regression hash test. Document the canonical conversion in the skill.
 - **Workaround**: Decoder uses bit-replication; baseline screenshot regenerated from this.
 - **Priority**: medium
+
+### FB-016 (2026-04-29)
+- **Skill**: esp32-build-flash / project knowledge base
+- **Category**: documentation
+- **Summary**: LVGL `LV_USE_PERF_MONITOR` requires `LV_USE_SYSMON=y` in sdkconfig — easy to miss.
+- **Detail**: Setting `CONFIG_LV_USE_PERF_MONITOR=y` alone is silently a no-op because `lv_conf_internal.h` gates the entire perf block on `LV_USE_SYSMON`. Day 5's screenshot showed LVGL's "LV_USE_PERF_MONITOR is not enabled" warning banner because of this. Document the dependency chain in any LVGL config notes.
+- **Workaround**: Added `CONFIG_LV_USE_SYSMON=y` to `sdkconfig.defaults`.
+- **Priority**: medium
+
+### FB-017 (2026-04-29)
+- **Skill**: automated-testing
+- **Category**: improvement
+- **Summary**: Hard-coded screenshot capture frame number is brittle to config changes.
+- **Detail**: Changing LVGL config (enabling SYSMON) shifted the benchmark's render schedule so flush #20 became "still on splash" instead of "mid-scene". Capture index needed bumping to #80. Better strategy: capture on the Nth flush *after* a content-presence check (e.g., framebuffer entropy ≥ threshold) rather than a fixed counter.
+- **Workaround**: Bumped CAPTURE_FLUSH_INDEX 20→80 with comment explaining timing.
+- **Priority**: low
+
+### FB-018 (2026-04-29)
+- **Skill**: tmux-multi-shell / environment-setup
+- **Category**: bug
+- **Summary**: `git clone --recurse-submodules` on espressif/qemu pulls multi-GB EDK2/SeaBIOS roms even for xtensa-only builds.
+- **Detail**: First QEMU build attempt fired off a recursive shallow clone — by 4:30 it was still cloning EDK2's berkeley-softfloat-3 nested submodule. For target-list=xtensa-softmmu we only need dtc, keycodemapdb, and berkeley-softfloat-3 in subprojects/. Aborting and pruning saved >2 GB and avoided the runaway.
+- **Workaround**: tools/build-qemu.sh now clones without --recurse-submodules and selectively `git submodule update --init` only the needed paths.
+- **Priority**: medium
