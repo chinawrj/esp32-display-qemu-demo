@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-DURATION="${1:-8}"
+DURATION="${1:-45}"
 MODE="${2:-run}"
 LOG_FILE="${LOG_FILE:-/tmp/esp32-qemu-serial.log}"
 
@@ -74,7 +74,19 @@ if [ "$MODE" = "verify" ]; then
     check "lvgl flush callback fired"         'lvgl flush #'
     check "demo started"                      'lv_demo_benchmark started'
     check "demo rendered ≥30 flushes (≥1s)"   'lvgl flush total: ([3-9][0-9]|[1-9][0-9]{2,})'
+    check "framebuffer capture begin marker"  '<<<FB_BEGIN size=64800 w=240 h=135 fmt=RGB565>>>'
+    check "framebuffer capture end marker"    '<<<FB_END>>>'
     check "demo completion banner"            'M3 LVGL benchmark demo complete'
+
+    # Extra: validate base64 payload line count (64800 bytes / 3 * 4 / 60 chars = 1440 lines)
+    fb_lines=$(grep -c '^FB=' "$LOG_FILE" || true)
+    if [ "$fb_lines" = "1440" ]; then
+        echo "  ✅ framebuffer payload size  (1440 base64 lines, expected 1440)"
+        PASS=$((PASS+1))
+    else
+        echo "  ❌ framebuffer payload size  (got $fb_lines lines, expected 1440)"
+        FAIL=$((FAIL+1))
+    fi
 
     echo ""
     echo "[run-qemu] Result: ${PASS} passed, ${FAIL} failed"

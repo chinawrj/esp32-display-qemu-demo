@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -11,13 +12,65 @@ static const char *TAG = "app_main";
 
 #define DISP_HOR_RES 240
 #define DISP_VER_RES 135
+#define DISP_PIXELS  (DISP_HOR_RES * DISP_VER_RES)
+#define DISP_BYTES   (DISP_PIXELS * 2)  /* RGB565 */
 
 /* Number of LVGL ticks (10 ms each) — ≥3 s gives benchmark room to log a summary */
-#define LVGL_LOOP_CYCLES 300
+#define LVGL_LOOP_CYCLES 600
 #define LVGL_LOOP_DELAY_MS 10
+
+/* Capture frame number — chosen to be after layout settles but before we hit cycle cap */
+#define CAPTURE_FLUSH_INDEX 20
 
 static volatile uint32_t s_flush_count = 0;
 static volatile bool s_benchmark_done = false;
+static volatile bool s_fb_dumped = false;
+
+/* Full-screen framebuffer allocated at runtime (heap) — placing 64 KB in
+ * .bss overflows ESP32's dram0_0_seg. Heap allocation also lets us release
+ * it later if memory pressure rises during the benchmark. */
+static lv_color_t *s_fb = NULL;
+
+static const char b64_alphabet[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/* Emit base64 of buffer to stdout in 60-char lines, surrounded by sentinels.
+ * Designed to be parseable from a serial log: lines starting with FB= contain payload. */
+static void dump_framebuffer_base64(const uint8_t *data, size_t len)
+{
+    printf("\n<<<FB_BEGIN size=%u w=%d h=%d fmt=RGB565>>>\n",
+           (unsigned)len, DISP_HOR_RES, DISP_VER_RES);
+
+    char line[64 + 8];  /* up to 60 b64 chars + "FB=" prefix + NUL */
+    size_t lp = 0;
+    line[lp++] = 'F'; line[lp++] = 'B'; line[lp++] = '=';
+    const size_t prefix = lp;
+
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t b0 = data[i];
+        uint32_t b1 = (i + 1 < len) ? data[i + 1] : 0;
+        uint32_t b2 = (i + 2 < len) ? data[i + 2] : 0;
+        uint32_t triple = (b0 << 16) | (b1 << 8) | b2;
+
+        line[lp++] = b64_alphabet[(triple >> 18) & 0x3F];
+        line[lp++] = b64_alphabet[(triple >> 12) & 0x3F];
+        line[lp++] = (i + 1 < len) ? b64_alphabet[(triple >> 6) & 0x3F] : '=';
+        line[lp++] = (i + 2 < len) ? b64_alphabet[triple & 0x3F] : '=';
+
+        if (lp >= prefix + 60) {
+            line[lp] = '\0';
+            puts(line);
+            lp = prefix;
+        }
+    }
+    if (lp > prefix) {
+        line[lp] = '\0';
+        puts(line);
+    }
+    /* Brief settle so the UART FIFO drains before the END marker */
+    vTaskDelay(pdMS_TO_TICKS(50));
+    printf("<<<FB_END>>>\n");
+}
 
 static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
@@ -26,6 +79,17 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
                  (unsigned long)s_flush_count,
                  (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2);
     }
+
+    /* Capture the framebuffer once after layout has settled. With FULL render
+     * mode, px_map is the entire DISP_HOR_RES * DISP_VER_RES buffer. */
+    if (!s_fb_dumped && s_flush_count == CAPTURE_FLUSH_INDEX) {
+        ESP_LOGI(TAG, "capturing framebuffer at flush #%d (%d bytes)",
+                 CAPTURE_FLUSH_INDEX, DISP_BYTES);
+        dump_framebuffer_base64(px_map, DISP_BYTES);
+        s_fb_dumped = true;
+        ESP_LOGI(TAG, "framebuffer dump complete");
+    }
+
     s_flush_count++;
     lv_display_flush_ready(disp);
 }
@@ -57,14 +121,20 @@ void app_main(void)
 
     lv_tick_set_cb(my_tick_get_cb);
 
-    static lv_color_t buf1[DISP_HOR_RES * 20];
-    static lv_color_t buf2[DISP_HOR_RES * 20];
-
     lv_display_t *disp = lv_display_create(DISP_HOR_RES, DISP_VER_RES);
-    lv_display_set_buffers(disp, buf1, buf2,
-                           sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+    s_fb = heap_caps_malloc(DISP_BYTES, MALLOC_CAP_DEFAULT | MALLOC_CAP_8BIT);
+    if (!s_fb) {
+        ESP_LOGE(TAG, "failed to allocate %d-byte framebuffer", DISP_BYTES);
+        return;
+    }
+    /* FULL render mode: flush_cb gets the entire framebuffer each call,
+     * which is what we need for a clean screenshot capture. */
+    lv_display_set_buffers(disp, s_fb, NULL,
+                           DISP_BYTES, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(disp, disp_flush_cb);
-    ESP_LOGI(TAG, "lvgl display created: %dx%d", DISP_HOR_RES, DISP_VER_RES);
+    ESP_LOGI(TAG, "lvgl display created: %dx%d (FULL render, fb=%d bytes)",
+             DISP_HOR_RES, DISP_VER_RES, DISP_BYTES);
 
     /* Launch the benchmark demo */
     lv_demo_benchmark_set_end_cb(benchmark_end_cb);
@@ -78,6 +148,7 @@ void app_main(void)
     }
 
     ESP_LOGI(TAG, "lvgl flush total: %lu", (unsigned long)s_flush_count);
+    ESP_LOGI(TAG, "framebuffer dumped: %s", s_fb_dumped ? "yes" : "NO");
     ESP_LOGI(TAG, "free heap after demo: %u bytes",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
 
