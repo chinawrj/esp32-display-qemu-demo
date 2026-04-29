@@ -185,3 +185,10 @@
 - **Summary**: Reuse expensive QEMU run across pytest session
 - **Detail**: Booting QEMU costs ~15 s wall-clock; running it per test is wasteful. Implemented in `tests/conftest.py`: session-scoped fixture reuses `/tmp/esp32-qemu-serial.log` if < 30 min old, supports `ESP32_QEMU_LOG` override for log-only testing (no boot needed). Result: warm pytest = 0.5 s, cold pytest = 47 s.
 - **Priority**: medium
+
+### FB-021 (2026-04-29)
+- **Skill**: project-scaffolding
+- **Category**: improvement
+- **Summary**: pytest needs `pythonpath = .` and `tools/__init__.py` for module-style imports
+- **Detail**: When tests import `from tools.fb_server.protocol import ...`, pytest must add the repo root to sys.path. Solution: add `pythonpath = .` to `pytest.ini` AND a stub `tools/__init__.py`. Without both, get `ModuleNotFoundError: No module named 'tools'` even though the dir exists.
+- **Priority**: medium

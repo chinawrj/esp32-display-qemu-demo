@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>esp32-display-qemu-demo · framebuffer viewer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>esp32-display-qemu-demo</h1>
+    <div class="meta">
+      <span id="status" class="status connecting">connecting…</span>
+      <span id="resolution">—</span>
+      <span id="fps">0 fps</span>
+    </div>
+  </header>
+  <main>
+    <canvas id="fb" width="240" height="135"></canvas>
+  </main>
+  <footer>
+    <code id="last-update">no updates yet</code>
+  </footer>
+  <script src="main.js" type="module"></script>
+</body>
+</html>
