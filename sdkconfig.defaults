@@ -33,6 +33,8 @@ CONFIG_LV_MEM_SIZE_KILOBYTES=128
 
 # Enable benchmark demo + perf log mode (so summary is printed via LV_LOG)
 CONFIG_LV_USE_DEMO_BENCHMARK=y
+# PERF_MONITOR requires SYSMON; both must be enabled together
+CONFIG_LV_USE_SYSMON=y
 CONFIG_LV_USE_PERF_MONITOR=y
 CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y
 

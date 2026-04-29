@@ -19,8 +19,10 @@ static const char *TAG = "app_main";
 #define LVGL_LOOP_CYCLES 600
 #define LVGL_LOOP_DELAY_MS 10
 
-/* Capture frame number — chosen to be after layout settles but before we hit cycle cap */
-#define CAPTURE_FLUSH_INDEX 20
+/* Capture frame number — chosen to be after layout settles but before we hit cycle cap.
+ * Benchmark renders ~144 flushes total in ~7 s; capturing at #80 lands mid-scene
+ * with both a benchmark scene and the SYSMON/perf overlay drawn. */
+#define CAPTURE_FLUSH_INDEX 80
 
 static volatile uint32_t s_flush_count = 0;
 static volatile bool s_benchmark_done = false;
