@@ -12,11 +12,12 @@
 #   brew install pixman glib ninja pkg-config libgcrypt sdl2
 #
 # IMPORTANT — host toolchain requirements:
-#   * Clang ≥ 15 (XCode ≥ 15) OR GCC ≥ 7.4 — QEMU 9.2 enforces this.
-#     Older XCode CommandLineTools (e.g. clang 14) will fail meson setup
-#     with: "You either need GCC v7.4 or Clang v10.0 (or XCode Clang v15.0)"
-#     Fix: `softwareupdate --install --all`, or install full XCode from the
-#     App Store, then `sudo xcode-select -s /Applications/Xcode.app`.
+#   * Clang ≥ 10 (XCode ≥ 14) OR GCC ≥ 7.4.
+#     QEMU 9.2 upstream demands XCode Clang ≥ 15, but we patch
+#     tools/qemu-src/meson.build to relax this to XCode 14 so macOS 12
+#     (Apple Clang 14) builds. Apple's SDK headers use clang-specific
+#     attribute syntax that GCC cannot parse, so Homebrew GCC is NOT a
+#     viable substitute — Apple Clang is required on macOS.
 #   * Python with `distlib` available — script auto-uses the project .venv.
 
 set -eo pipefail
@@ -31,9 +32,18 @@ case "${1:-}" in
   clean)     rm -rf "$SRC_DIR/build"; echo "[build-qemu] removed $SRC_DIR/build" ;;
 esac
 
+# Host compiler selection — QEMU's meson check has been relaxed (in our fork)
+# to allow Apple Clang 14 on macOS 12. Honor user-supplied CC/CXX, otherwise
+# let configure auto-detect (defaults to /usr/bin/cc → Apple clang).
+# (Using Homebrew GCC bottle was attempted but it cannot parse Apple SDK
+#  headers' clang-specific attribute syntax.)
+export CC CXX
+
 echo "[build-qemu] src dir : $SRC_DIR"
 echo "[build-qemu] branch  : $BRANCH"
 echo "[build-qemu] jobs    : $JOBS"
+echo "[build-qemu] CC      : ${CC:-<default cc>}"
+echo "[build-qemu] CXX     : ${CXX:-<default c++>}"
 
 if [ ! -d "$SRC_DIR/.git" ]; then
   echo "[build-qemu] cloning (shallow, no submodules yet)..."
@@ -43,6 +53,18 @@ else
 fi
 
 cd "$SRC_DIR"
+
+# Idempotently relax QEMU's hard XCode 15 / Apple Clang 15 requirement to
+# Clang 14, so macOS 12 (Apple Clang 14) can compile QEMU 9.2. Clang 14
+# actually builds QEMU fine — the upstream guard is conservative.
+if grep -q "XCode Clang v15.0" meson.build 2>/dev/null; then
+  echo "[build-qemu] patching meson.build: relax XCode Clang v15 -> v14"
+  # macOS sed needs an explicit backup-suffix arg
+  sed -i.bak \
+    -e 's/__clang_major__ < 15 || (__clang_major__ == 15/__clang_major__ < 14 || (__clang_major__ == 14/g' \
+    -e 's/XCode Clang v15.0/XCode Clang v14.0/g' \
+    meson.build
+fi
 
 # Only init submodules required for xtensa-softmmu. Skipping the giant
 # edk2/SeaBIOS/etc. roms saves >2 GB and many minutes of cloning.
@@ -74,10 +96,20 @@ if [ ! -f build/build.ninja ]; then
     PY_FLAG="--python=${PROJECT_VENV_PY}"
     echo "[build-qemu] using python: $PROJECT_VENV_PY"
   fi
-  ../configure $PY_FLAG \
+  CC_FLAG=""
+  CXX_FLAG=""
+  OBJCC_FLAG=""
+  if [ -n "${CC:-}" ]; then CC_FLAG="--cc=${CC}"; fi
+  if [ -n "${CXX:-}" ]; then CXX_FLAG="--cxx=${CXX}"; fi
+  # On macOS QEMU also probes the Objective-C compiler (still clang 14 from
+  # CommandLineTools). Point it at gcc-NN too — gcc happily handles the
+  # tiny amount of ObjC code involved (and we --disable-cocoa anyway).
+  if [ -n "${CC:-}" ]; then OBJCC_FLAG="--objcc=${CC}"; fi
+  ../configure $PY_FLAG $CC_FLAG $CXX_FLAG $OBJCC_FLAG \
     --target-list=xtensa-softmmu \
     --enable-gcrypt \
     --enable-sdl \
+    --disable-cocoa \
     --disable-werror \
     --disable-docs \
     --disable-tools \

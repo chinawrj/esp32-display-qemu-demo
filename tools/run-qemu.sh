@@ -20,6 +20,19 @@ LOG_FILE="${LOG_FILE:-/tmp/esp32-qemu-serial.log}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
+# Prefer locally-built QEMU if available (Day 14 work). Override via
+# QEMU_BIN=... or set USE_LOCAL_QEMU=0 to force the IDF-managed binary.
+if [ -z "${QEMU_BIN:-}" ] && [ "${USE_LOCAL_QEMU:-1}" = "1" ]; then
+    LOCAL_QEMU="$PROJECT_DIR/tools/qemu-src/build/qemu-system-xtensa"
+    [ -x "$LOCAL_QEMU" ] && QEMU_BIN="$LOCAL_QEMU"
+fi
+if [ -n "${QEMU_BIN:-}" ] && [ -x "${QEMU_BIN}" ]; then
+    QEMU_BIN_DIR="$(dirname "$QEMU_BIN")"
+    PATH="${QEMU_BIN_DIR}:${PATH}"
+    export PATH
+    echo "[run-qemu] using local QEMU: $QEMU_BIN"
+fi
+
 if [ ! -f build/esp32-display-qemu-demo.bin ]; then
     echo "ERROR: build/esp32-display-qemu-demo.bin not found. Run 'idf.py build' first." >&2
     exit 2
