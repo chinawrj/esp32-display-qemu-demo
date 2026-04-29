@@ -206,3 +206,10 @@
 - **Summary**: Playwright + pytest-playwright both needed; auto-fixtures conflict with custom subprocess fixtures
 - **Detail**: Installed `pytest-playwright` to register the plugin, but used `playwright.sync_api.sync_playwright()` directly inside a custom `browser_page` fixture instead of relying on the auto-injected `page` fixture. Reason: the auto fixture has session/function scoping that didn't compose well with our subprocess-spawning `fb_server` fixture. `playwright install chromium` is mandatory after pip install (~100 MB). Document this in any skill that adds browser-driven tests.
 - **Priority**: low
+
+### FB-024 (2026-04-29)
+- **Skill**: daily-iteration
+- **Category**: improvement
+- **Summary**: Break large P0 tasks into "smallest visible value" milestones first
+- **Detail**: cdp-phase2-lvgl-flush originally implied firmware TCP client + QEMU networking + new server transport — easily a multi-day risky chunk. Reframed as a log-replay first milestone: parse the existing serial log, decode RGB565, push through the existing WS bridge. Zero firmware changes, ~150 LOC, delivers a real LVGL frame in Chrome. Streaming push becomes a clean follow-up. Pattern: when a P0 looks multi-day, ask "what zero-risk first slice still produces a user-visible win?"
+- **Priority**: medium

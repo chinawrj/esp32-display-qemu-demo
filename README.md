@@ -150,7 +150,7 @@ Key numbers:
 
 ```bash
 source .venv/bin/activate
-pytest                                   # 21 tests, ~22 s warm / ~70 s cold
+pytest                                   # 27 tests, ~22 s warm / ~80 s cold
 ```
 
 The suite reuses `/tmp/esp32-qemu-serial.log` if it's < 30 minutes old; otherwise
@@ -173,15 +173,25 @@ booting QEMU at all.
 super-simulator: a Python WebSocket bridge plus a vanilla-JS Canvas client that
 together render a 240×135 RGB565 framebuffer in real time.
 
+Two frame sources are supported:
+
 ```bash
 source .venv/bin/activate
-python -m tools.fb_server.server         # ws://127.0.0.1:7788, http://127.0.0.1:8080
-open http://127.0.0.1:8080               # macOS — opens Chrome viewer
+
+# (a) synthetic moving rect — no QEMU required
+python -m tools.fb_server.server                                       # ws=7788, http=8080
+
+# (b) replay a real LVGL frame from a captured QEMU serial log
+python -m tools.fb_server.server --source log --fb-log /tmp/esp32-qemu-serial.log --fps 1
+
+open http://127.0.0.1:8080                                             # macOS — opens Chrome viewer
 ```
 
-Right now the server uses a synthetic producer (animated rectangle) so the
-frontend can be developed standalone. A future workday will replace it with a
-real-time push from the LVGL `flush_cb` (`cdp-phase2`).
+Mode (b) parses the same `<<<FB_BEGIN ... FB= ... FB_END>>>` block that
+`tools/decode-fb.py` understands, so any log captured by `tools/run-qemu.sh`
+will render directly in Chrome. Real-time push from a live `flush_cb` (TCP /
+QEMU chardev / shared-memory) is the next milestone — log-replay is the
+zero-firmware-change first step that proves the pipeline end-to-end.
 
 ---
 
