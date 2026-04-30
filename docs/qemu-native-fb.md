@@ -246,3 +246,29 @@ ESP_RGB_VRAM_FILE=/tmp/esp32-rgb-vram.bin \
 
 This is the first end-to-end firmware → host → browser frame pipeline
 in the project that doesn't depend on the UART base64 dump.
+
+## Day 21 update — visual verification loop closed in real Chrome ✅
+
+Added `tests/cdp/test_raw_vram_canvas.py`, a Playwright-driven test that
+spawns `fb_server --source raw-vram` against a synthetic 32×16 surface,
+opens the framebuffer viewer in headless Chromium, and asserts:
+
+* the canvas centre pixel matches the expected RGB565→RGB888 conversion
+  (within ±2 LSBs to allow for channel-replication rounding);
+* mutating the surface bytes (red → blue) is reflected on the canvas
+  within a 4-second budget — i.e. the host-poll → WS → JS → ImageData
+  round trip works end-to-end inside a real browser;
+* a baseline canvas screenshot is captured to `artifacts/cdp-raw-vram.png`.
+
+Suite: **51/51** with `IDF_PATH` sourced (was 49/49).
+
+This is the AI-friendly visual loop from the original task book Phase 4:
+```
+generate UI code → build → QEMU → VRAM mmap → fb_server → Chrome → CDP
+                                                                    ↓
+                                                           AI / pytest checks
+```
+Together with Day 20's CLI cookbook, the whole pipeline now has a single
+pytest invocation that exercises every layer except the QEMU instance
+itself (which the older `tests/test_qemu_vram_file.py` snapshot test
+already covers).
