@@ -40,6 +40,7 @@ done
 VRAM_FILE="${ESP_RGB_VRAM_FILE:-/tmp/esp32-rgb-vram.bin}"
 WS_PORT="${FB_WS_PORT:-7788}"
 HTTP_PORT="${FB_HTTP_PORT:-8080}"
+VRAM_Y="${VRAM_Y:-0}"   # 0 = live mirror (every flush, Day-23 scene); 200 = frozen snapshot at flush #80
 URL="http://127.0.0.1:${HTTP_PORT}/index.html?ws=${WS_PORT}"
 
 QEMU_PID=""
@@ -103,7 +104,7 @@ echo "[run-demo] starting fb_server raw-vram on ws=$WS_PORT http=$HTTP_PORT"
 .venv/bin/python -m tools.fb_server.server \
     --source raw-vram \
     --vram-path "$VRAM_FILE" \
-    --vram-x 0 --vram-y 200 --surface-w 800 \
+    --vram-x 0 --vram-y "$VRAM_Y" --surface-w 800 \
     --width 240 --height 135 \
     --ws-port "$WS_PORT" --http-port "$HTTP_PORT" \
     --fps 30 > "$SERVER_LOG" 2>&1 &

@@ -303,3 +303,31 @@ or when the firmware hasn't been built. To avoid clobbering the warm log used
 by `test_log_replay`, it passes `LOG_FILE=/tmp/run-demo-serial.log` to the
 subprocess. Suite: **52** collected, **50–52 passing** depending on whether
 the warm `/tmp/esp32-qemu-serial.log` is present at collection time.
+
+## Day 23 — Always-live VRAM mirror
+
+The Day-22 launcher defaulted to `--vram-y 200` (the frozen snapshot region)
+because the live mirror at `y=0` reflected the LAST LVGL flush — and after
+`lv_demo_benchmark` finishes, the firmware would idle, leaving the live
+region stuck on the benchmark's near-monochrome end-of-run summary frame.
+
+Day 23 swaps the default to `y=0` and gives the firmware something to do
+forever:
+
+* **Tried first**: re-launch `lv_demo_benchmark()` in a loop. **Failed** —
+  re-invoking it resets internal LVGL state in a way that causes the dump
+  at flush #80 to fire a second time (breaking
+  `tests/test_qemu_boot.py::test_framebuffer_payload_line_count`), and any
+  custom widget creation post-benchmark crashes inside `lv_free` /
+  `get_prop_core` because the benchmark's deferred teardown corrupts the
+  TLSF heap.
+* **Shipped**: paint a scrolling RGB565 gradient **directly into the QEMU
+  VRAM mmap** post-benchmark, bypassing LVGL entirely. Zero allocation,
+  zero LVGL re-entry, ~30 fps (`vTaskDelay(33)`), > 1000 unique colours
+  per frame. The frozen snapshot at `y=200` (which `test_qemu_vram_file`
+  asserts byte-for-byte against the UART dump) stays untouched.
+
+`tools/run-demo.sh` now defaults to `--vram-y 0`. Override with
+`VRAM_Y=200` if you want the legacy frozen-snapshot view (still useful
+for golden-image comparisons). Suite: 50 passed + 2 standard
+collection-time skips.

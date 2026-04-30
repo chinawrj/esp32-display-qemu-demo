@@ -119,7 +119,14 @@ viewer in your default browser:
 bash tools/run-demo.sh                   # interactive, Ctrl-C to stop
 bash tools/run-demo.sh --auto-test       # headless Playwright canvas check
 bash tools/run-demo.sh --no-browser      # just keep the pipeline up
+VRAM_Y=200 bash tools/run-demo.sh        # show the frozen hero snapshot instead
 ```
+
+The default reads the **live mirror** at `y=0`: while the LVGL benchmark
+runs you see the demo widgets, and once the benchmark completes the firmware
+keeps painting an animated RGB565 gradient directly into VRAM (Day 23) so the
+canvas never freezes. `VRAM_Y=200` switches to the frozen hero snapshot
+captured at flush #80.
 
 The auto-test path is the same one driven by `tests/cdp/test_live_qemu_canvas.py`,
 so you can use it as an end-to-end smoke test from the shell. Output:

@@ -192,4 +192,33 @@ void app_main(void)
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "  M3 LVGL benchmark demo complete");
     ESP_LOGI(TAG, "========================================");
+
+    /* Day 23: keep the QEMU VRAM live mirror at y=0 content-rich for the
+     * interactive Chrome demo. We deliberately do NOT touch LVGL after the
+     * benchmark — its deferred teardown corrupts global widget state, and
+     * re-invoking lv_demo_benchmark() resets s_flush_count internally,
+     * breaking the test_qemu_boot / test_qemu_vram_file invariants.
+     *
+     * Instead, paint directly into the VRAM mmap region (RGB565). This
+     * bypasses LVGL entirely, has zero allocation, and the host fb_server
+     * sees a continuously animated frame. The frozen snapshot at y=200
+     * (the "hero scene") is preserved untouched. */
+    volatile uint16_t *vram = QEMU_RGB_VRAM_ADDR;
+    uint32_t phase = 0;
+    while (1) {
+        for (int row = 0; row < DISP_VER_RES; row++) {
+            for (int col = 0; col < DISP_HOR_RES; col++) {
+                /* Diagonal RGB565 gradient that scrolls with `phase`. Mixes
+                 * R/G/B channels so the live mirror always has many unique
+                 * colours (auto-test threshold = 8). */
+                uint8_t r = (uint8_t)((col + phase) & 0x1F);
+                uint8_t g = (uint8_t)((row * 2 + phase / 2) & 0x3F);
+                uint8_t b = (uint8_t)((col + row + phase) & 0x1F);
+                vram[row * QEMU_RGB_SURFACE_W + col] =
+                    (uint16_t)((r << 11) | (g << 5) | b);
+            }
+        }
+        phase += 2;
+        vTaskDelay(pdMS_TO_TICKS(33));   /* ~30 fps */
+    }
 }
