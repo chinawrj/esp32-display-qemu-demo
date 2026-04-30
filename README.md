@@ -361,3 +361,10 @@ state) and is automatable via Chrome DevTools Protocol.
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+## Roadmap / pickup-ready work
+
+The next big target — **moving framebuffer-to-Chrome export down into the QEMU
+device itself, with zero firmware-side changes** — is fully spec'd in
+[`BACKLOG.md`](BACKLOG.md). It's intended for a Linux contributor; the macOS
+path is the existing file-mmap bridge.
