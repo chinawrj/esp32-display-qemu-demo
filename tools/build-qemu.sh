@@ -66,6 +66,39 @@ if grep -q "XCode Clang v15.0" meson.build 2>/dev/null; then
     meson.build
 fi
 
+# Idempotently patch hw/display/esp_rgb.c so the device's VRAM can optionally
+# be backed by a host file (shared mmap) when env ESP_RGB_VRAM_FILE is set.
+# This lets a host process read the live framebuffer without changing default
+# behaviour. Marker: ESP_RGB_VRAM_FILE_PATCH.
+if [ -f hw/display/esp_rgb.c ] && ! grep -q "ESP_RGB_VRAM_FILE_PATCH" hw/display/esp_rgb.c; then
+  echo "[build-qemu] patching hw/display/esp_rgb.c: opt-in file-backed VRAM"
+  python3 - <<'PY'
+import re, pathlib
+p = pathlib.Path("hw/display/esp_rgb.c")
+src = p.read_text()
+old = '    /* Create a memory region that can be used as a framebuffer by the guest */\n    memory_region_init_ram(&s->vram, OBJECT(s), "esp-rgb-vram", ESP_RGB_MAX_VRAM_SIZE, &error_abort);\n'
+new = '''    /* Create a memory region that can be used as a framebuffer by the guest */
+    /* ESP_RGB_VRAM_FILE_PATCH: if env ESP_RGB_VRAM_FILE is set, back VRAM with
+     * a shared host file so external tools can mmap and stream live pixels. */
+    {
+        const char *vram_file = getenv("ESP_RGB_VRAM_FILE");
+        if (vram_file && vram_file[0]) {
+            memory_region_init_ram_from_file(&s->vram, OBJECT(s),
+                "esp-rgb-vram", ESP_RGB_MAX_VRAM_SIZE, 0,
+                RAM_SHARED, vram_file, 0, &error_abort);
+            info_report("esp_rgb: VRAM backed by shared file %s (%u bytes)",
+                vram_file, (unsigned)ESP_RGB_MAX_VRAM_SIZE);
+        } else {
+            memory_region_init_ram(&s->vram, OBJECT(s),
+                "esp-rgb-vram", ESP_RGB_MAX_VRAM_SIZE, &error_abort);
+        }
+    }
+'''
+assert old in src, "anchor not found in hw/display/esp_rgb.c"
+p.write_text(src.replace(old, new, 1))
+PY
+fi
+
 # Only init submodules required for xtensa-softmmu. Skipping the giant
 # edk2/SeaBIOS/etc. roms saves >2 GB and many minutes of cloning.
 SUBMODULES_NEEDED=(

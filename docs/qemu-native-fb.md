@@ -113,3 +113,76 @@ for init, upd, payload in stream_frames(Path("/tmp/esp32-fb")):
 
 This entire investigation is preserved here so future workdays don't have to
 re-derive the trade-offs.
+
+---
+
+## Day 18 update — `ESP_RGB_VRAM_FILE` opt-in patch landed
+
+While re-reading the fork's QEMU source (`chinawrj/qemu @
+esp-develop-based-on-9.2.2`) we discovered it **already includes** a virtual
+RGB display device — `hw/display/esp_rgb.c`, type `display.esp.rgb` — wired
+into the ESP32 board at:
+
+| Region | Guest address | Size |
+| --- | --- | --- |
+| Control regs | `DR_REG_FRAMEBUF_BASE = 0x21000000` | `ESP_RGB_IO_SIZE` |
+| VRAM         | `0x20000000`                        | `ESP_RGB_MAX_VRAM_SIZE = 800·600·4 = 1 920 000 B` |
+
+Crucially, those addresses match exactly the constants used by Espressif's
+managed component **`espressif/esp_lcd_qemu_rgb @ 1.0.2`**
+(`0x21000000` regs / `0x20000000` framebuffer). The component declares
+`idf: ">=5.3"` with no target restriction → it works on plain ESP32, not
+just S3. This unblocks the long-deferred Path B (firmware → real LVGL →
+`esp_lcd_qemu_rgb` → QEMU device → host) end-to-end.
+
+### What landed today (Path A, infrastructure only)
+
+`tools/build-qemu.sh` now idempotently patches `hw/display/esp_rgb.c` so the
+device's VRAM can be backed by a shared host file when env
+`ESP_RGB_VRAM_FILE` is set:
+
+```c
+/* ESP_RGB_VRAM_FILE_PATCH */
+const char *vram_file = getenv("ESP_RGB_VRAM_FILE");
+if (vram_file && vram_file[0]) {
+    memory_region_init_ram_from_file(&s->vram, OBJECT(s),
+        "esp-rgb-vram", ESP_RGB_MAX_VRAM_SIZE, 0,
+        RAM_SHARED, vram_file, 0, &error_abort);
+} else {
+    memory_region_init_ram(&s->vram, OBJECT(s),
+        "esp-rgb-vram", ESP_RGB_MAX_VRAM_SIZE, &error_abort);
+}
+```
+
+Default behaviour is unchanged (env unset → plain anonymous RAM). With env
+set, QEMU `mmap`s the named file with `MAP_SHARED`, so any host process can
+`mmap` the same file and observe live VRAM mutations from the guest.
+
+### Verification
+
+```bash
+ESP_RGB_VRAM_FILE=/tmp/esp32-rgb-vram.bin \
+  QEMU_BIN="$(pwd)/tools/qemu-src/build/qemu-system-xtensa" \
+  bash tools/run-qemu.sh 150 verify
+# -> 10/10 boot checks pass; /tmp/esp32-rgb-vram.bin is 1 921 024 B
+#    (1 920 000 rounded to next 4 KiB host page).
+```
+
+`tests/test_qemu_vram_file.py` is the new regression: it asserts the patch
+marker is present in the source and that any VRAM file from a prior boot is
+≥ 1 920 000 B and `mmap`-able.
+
+Today the file content stays all-zero, because the firmware still pushes
+pixels through LVGL `flush_cb` → UART, **not** through the QEMU `esp_rgb`
+MMIO. That switch is the next workday's deliverable.
+
+### Next step (Path B, firmware switch)
+
+1. Add managed dep `espressif/esp_lcd_qemu_rgb: "^1.0.2"` to `main/idf_component.yml`.
+2. Replace the `flush_cb` UART path with `esp_lcd_panel_qemu_rgb_new(...)` +
+   LVGL `set_draw_buffers()` against the panel-owned framebuffer.
+3. Run with `ESP_RGB_VRAM_FILE=…` and update `shmem_producer.py` with a
+   "headerless mode" that reads the first `240·135·2` bytes of the file as
+   RGB565, repacks them into the existing `<IHH` frame header, and streams
+   to Chrome.
+4. Drop the UART base64 dump path entirely.
