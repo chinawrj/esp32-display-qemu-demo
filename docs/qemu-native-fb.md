@@ -272,3 +272,34 @@ Together with Day 20's CLI cookbook, the whole pipeline now has a single
 pytest invocation that exercises every layer except the QEMU instance
 itself (which the older `tests/test_qemu_vram_file.py` snapshot test
 already covers).
+
+## Day 22 — One-command live demo
+
+`tools/run-demo.sh` collapses the full pipeline into a single command:
+
+```
+QEMU (esp_rgb VRAM mmap)  →  fb_server (raw-vram source)  →  Chrome canvas
+        $!                          $!                       (open URL)
+```
+
+Modes:
+* default (interactive) — boots QEMU for up to `--duration` seconds (3600 by
+  default), opens `http://127.0.0.1:$FB_HTTP_PORT/` in the system browser, waits
+  for Ctrl-C; an `EXIT/INT/TERM` trap reaps both child PIDs.
+* `--no-browser` — same as above but skips the `open` call.
+* `--auto-test` — invokes `tools/auto_test_canvas.py`, a standalone Playwright
+  client that polls the canvas for `sum > 0` and `unique colours ≥ 8`,
+  saves `artifacts/run-demo-canvas.png`, then tears the pipeline down.
+
+The defaults intentionally read the **frozen snapshot region** (`--vram-y 200`):
+the live mirror at y=0 holds the last LVGL flush, but `lv_demo_benchmark`
+finishes with a near-monochrome summary frame which would fool a "canvas not
+blank" check. The y=200 region is written once at flush #80 with the rich
+hero scene (90 distinct colours).
+
+`tests/cdp/test_live_qemu_canvas.py` wraps this script for pytest. It
+auto-skips when `IDF_PATH` is unset, when `qemu-system-xtensa` isn't on PATH,
+or when the firmware hasn't been built. To avoid clobbering the warm log used
+by `test_log_replay`, it passes `LOG_FILE=/tmp/run-demo-serial.log` to the
+subprocess. Suite: **52** collected, **50–52 passing** depending on whether
+the warm `/tmp/esp32-qemu-serial.log` is present at collection time.

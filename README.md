@@ -109,6 +109,22 @@ bash tools/start-demo.sh                 # full: build + boot + verify
 bash tools/start-demo.sh quick           # skip build
 ```
 
+### Live Chrome viewer (one command)
+
+`tools/run-demo.sh` boots QEMU with the `esp_rgb` VRAM mmap'd to a host file,
+starts the fb_server in `raw-vram` mode, and (interactively) opens the canvas
+viewer in your default browser:
+
+```bash
+bash tools/run-demo.sh                   # interactive, Ctrl-C to stop
+bash tools/run-demo.sh --auto-test       # headless Playwright canvas check
+bash tools/run-demo.sh --no-browser      # just keep the pipeline up
+```
+
+The auto-test path is the same one driven by `tests/cdp/test_live_qemu_canvas.py`,
+so you can use it as an end-to-end smoke test from the shell. Output:
+`artifacts/run-demo-canvas.png`.
+
 ---
 
 ## How the screenshot pipeline works
