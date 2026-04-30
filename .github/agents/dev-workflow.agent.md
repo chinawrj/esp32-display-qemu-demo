@@ -1,4 +1,5 @@
 ---
+name: dev-workflow
 description: "esp32-display-qemu-demo 开发工作流 Agent - 驱动每日迭代开发"
 ---
 

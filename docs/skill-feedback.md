@@ -47,3 +47,19 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: `_qemu_available()` returned True if `shutil.which("qemu-system-xtensa")` succeeded. On Linux Day 1 the IDF-managed qemu-xtensa is on `PATH` after sourcing `export.sh`, so the live-canvas test ran but `/tmp/esp32-rgb-vram.bin` was never created (Day 14 mmap export only exists in `tools/qemu-src/`), and the test failed by timeout. Tightened the predicate to require `tools/qemu-src/build/qemu-system-xtensa` specifically. Once NEXT-001 (QEMU-native FB→Chrome WebSocket) lands, this constraint can be relaxed.
 - **Workaround**: Skip predicate now requires the locally-built patched binary.
 - **Priority**: low (correct skip behavior restored)
+
+### FB-006 (2026-04-30)
+- **Skill**: agent / .vscode/mcp.json template
+- **Category**: documentation
+- **Summary**: Claude Code's `.mcp.json` rejects URL-only entries silently — must include `"type": "http"` (or `sse`/`command`).
+- **Detail**: The repo's existing `.vscode/mcp.json` (consumed by GitHub Copilot CLI / VS Code) lists MCP servers as `{"url": "https://…"}`. When mirrored verbatim into a top-level `.mcp.json` for Claude Code 2.1.123, `claude mcp list` shows nothing (no error, no warning). Adding `"type": "http"` to each entry made `claude mcp get` reach `Status: ✓ Connected`. The Copilot URL-only form is therefore not portable; the agent template should call out the explicit-type requirement.
+- **Workaround**: Always include `"type": "http"` (or sse/stdio command) in `.mcp.json`. Repo now has both `.vscode/mcp.json` (Copilot-style) and `.mcp.json` (Claude-style) side by side; tests/test_dual_cli_parity.py enforces the type field.
+- **Priority**: medium
+
+### FB-007 (2026-04-30)
+- **Skill**: agent / project-scaffolding (.github/agents naming)
+- **Category**: improvement
+- **Summary**: Copilot CLI's `<name>.agent.md` filename convention produces an ugly agent name on Claude Code (`dev-workflow.agent` instead of `dev-workflow`).
+- **Detail**: Claude Code derives an agent's display name from the filename stem. `.github/agents/dev-workflow.agent.md` therefore registers as agent `dev-workflow.agent` rather than `dev-workflow`. We worked around this by symlinking `.claude/agents/dev-workflow.md → ../../.github/agents/dev-workflow.agent.md` (rename happens at the symlink), and by adding an explicit `name: dev-workflow` line to the source frontmatter. Both CLIs honour the explicit `name:` if present, which is a more robust default than relying on filename derivation.
+- **Workaround**: Always set `name:` in agent frontmatter explicitly; new agents added to `.github/agents/<name>.agent.md` should also have `tools/sync-claude-mirror.sh` re-run to drop the `.agent` infix in the Claude mirror.
+- **Priority**: low

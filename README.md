@@ -358,9 +358,52 @@ state) and is automatable via Chrome DevTools Protocol.
 
 ---
 
+## AI-assisted dev workflow (dual-CLI: GitHub Copilot CLI + Claude Code)
+
+This repo ships a small set of project-level **agents**, **skills**, and **MCP
+servers** that drive its daily-iteration workflow. Both the GitHub Copilot CLI
+and Anthropic's Claude Code CLI can use the same source files — the layouts
+are kept in sync via symlinks, so there is exactly **one canonical source per
+artefact** to maintain.
+
+| Artefact | Canonical source | Copilot CLI sees it as | Claude Code sees it as |
+|---|---|---|---|
+| Dev-workflow agent | `.github/agents/dev-workflow.agent.md` | `.github/agents/…` (native) | `.claude/agents/dev-workflow.md` (symlink) |
+| Skills (×7) | `.github/skills/<name>/` | `.github/skills/…` (native) | `.claude/skills/<name>/` (symlink) |
+| MCP servers | `.mcp.json` (Claude) + `.vscode/mcp.json` (Copilot) | `.vscode/mcp.json` | `.mcp.json` |
+
+Both CLIs follow the [Agent Skills open standard](https://agentskills.io)
+(YAML frontmatter `name` + `description`, then the Markdown playbook), so the
+existing `SKILL.md` files are byte-identical in both views.
+
+**Verify discovery:**
+
+```bash
+# Copilot CLI: just open the repo and ask "list project skills"
+# Claude Code CLI:
+claude agents                                 # → "Project agents: dev-workflow"
+claude mcp get esp-component-registry         # → "Status: ✓ Connected"
+claude --print "List project skills, names only" \
+  --permission-mode bypassPermissions         # → 7 skill names
+```
+
+A pytest case at `tests/test_dual_cli_parity.py` enforces the symlink mirror
+and frontmatter shape, so dual-CLI parity will not silently regress.
+
+When adding a **new skill**, only edit the canonical `.github/skills/<name>/`
+directory — the corresponding `.claude/skills/<name>/` symlink is added once
+by `tools/sync-claude-mirror.sh` (or by hand:
+`ln -s ../../.github/skills/<name> .claude/skills/<name>`).
+
+---
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+---
+
+
 
 ## Roadmap / pickup-ready work
 
