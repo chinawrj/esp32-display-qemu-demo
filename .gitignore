@@ -17,3 +17,12 @@ tools/qemu-src/
 
 # Playwright/CDP test outputs (regenerated each run)
 artifacts/
+
+# GitHub Copilot CLI tooling (Day 2 dual-CLI parity work) — installed via
+# `npm install @github/copilot`; npm-managed, regenerable, not source-of-truth.
+node_modules/
+package.json
+package-lock.json
+
+# ESP-IDF leaves this behind after `idf.py menuconfig` / `reconfigure`.
+sdkconfig.old
