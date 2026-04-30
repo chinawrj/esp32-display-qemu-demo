@@ -8,6 +8,9 @@
 #include "lvgl.h"
 #include "demos/lv_demos.h"
 
+#include "fb_dump.h"
+#include "qemu_vram.h"
+
 static const char *TAG = "app_main";
 
 #define DISP_HOR_RES 240
@@ -33,74 +36,6 @@ static volatile bool s_fb_dumped = false;
  * it later if memory pressure rises during the benchmark. */
 static lv_color_t *s_fb = NULL;
 
-static const char b64_alphabet[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/* Emit base64 of buffer to stdout in 60-char lines, surrounded by sentinels.
- * Designed to be parseable from a serial log: lines starting with FB= contain payload. */
-static void dump_framebuffer_base64(const uint8_t *data, size_t len)
-{
-    printf("\n<<<FB_BEGIN size=%u w=%d h=%d fmt=RGB565>>>\n",
-           (unsigned)len, DISP_HOR_RES, DISP_VER_RES);
-
-    char line[64 + 8];  /* up to 60 b64 chars + "FB=" prefix + NUL */
-    size_t lp = 0;
-    line[lp++] = 'F'; line[lp++] = 'B'; line[lp++] = '=';
-    const size_t prefix = lp;
-
-    for (size_t i = 0; i < len; i += 3) {
-        uint32_t b0 = data[i];
-        uint32_t b1 = (i + 1 < len) ? data[i + 1] : 0;
-        uint32_t b2 = (i + 2 < len) ? data[i + 2] : 0;
-        uint32_t triple = (b0 << 16) | (b1 << 8) | b2;
-
-        line[lp++] = b64_alphabet[(triple >> 18) & 0x3F];
-        line[lp++] = b64_alphabet[(triple >> 12) & 0x3F];
-        line[lp++] = (i + 1 < len) ? b64_alphabet[(triple >> 6) & 0x3F] : '=';
-        line[lp++] = (i + 2 < len) ? b64_alphabet[triple & 0x3F] : '=';
-
-        if (lp >= prefix + 60) {
-            line[lp] = '\0';
-            puts(line);
-            lp = prefix;
-        }
-    }
-    if (lp > prefix) {
-        line[lp] = '\0';
-        puts(line);
-    }
-    /* Brief settle so the UART FIFO drains before the END marker */
-    vTaskDelay(pdMS_TO_TICKS(50));
-    printf("<<<FB_END>>>\n");
-}
-
-/* QEMU `esp_rgb` virtual display VRAM lives at this fixed address; matches
- * Espressif's `esp_lcd_qemu_rgb` driver constant. The device surface is
- * fixed at ESP_RGB_MAX_WIDTH x ESP_RGB_MAX_HEIGHT (800x600) so we render at
- * top-left with a row-stride that skips the rest of the line. Harmless on
- * real hardware (this region is unmapped MMIO) since we never run there. */
-#define QEMU_RGB_VRAM_ADDR    ((volatile uint16_t *)0x20000000U)
-#define QEMU_RGB_SURFACE_W    800
-/* Y-offset for the frozen snapshot region (well below the live mirror). */
-#define QEMU_RGB_SNAPSHOT_Y   200
-
-/* Copy a 240x135 RGB565 frame from LVGL into the QEMU virtual framebuffer.
- * `dst_y` selects the destination row inside the 800x600 surface so we can
- * keep both a "live mirror" at y=0 (overwritten every flush) and a "frozen
- * snapshot" at y=QEMU_RGB_SNAPSHOT_Y (written only at CAPTURE_FLUSH_INDEX,
- * matching the UART base64 dump for byte-for-byte comparability). */
-static void mirror_to_qemu_vram(const uint8_t *px_map, int dst_y)
-{
-    const uint16_t *src = (const uint16_t *)px_map;
-    volatile uint16_t *dst = QEMU_RGB_VRAM_ADDR;
-    for (int row = 0; row < DISP_VER_RES; row++) {
-        for (int col = 0; col < DISP_HOR_RES; col++) {
-            dst[(dst_y + row) * QEMU_RGB_SURFACE_W + col] =
-                src[row * DISP_HOR_RES + col];
-        }
-    }
-}
-
 static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
     if (s_flush_count < 3) {
@@ -111,18 +46,18 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 
     /* Live mirror at (0, 0): every flush overwrites this region so any host
      * tool with the file mmap'd sees the latest LVGL frame in real time. */
-    mirror_to_qemu_vram(px_map, 0);
+    qemu_vram_mirror(px_map, DISP_HOR_RES, DISP_VER_RES, 0);
 
     /* Capture the framebuffer once after layout has settled. With FULL render
      * mode, px_map is the entire DISP_HOR_RES * DISP_VER_RES buffer. */
     if (!s_fb_dumped && s_flush_count == CAPTURE_FLUSH_INDEX) {
         ESP_LOGI(TAG, "capturing framebuffer at flush #%d (%d bytes)",
                  CAPTURE_FLUSH_INDEX, DISP_BYTES);
-        /* Frozen snapshot at y=QEMU_RGB_SNAPSHOT_Y: never overwritten, so it
+        /* Frozen snapshot at QEMU_RGB_SNAPSHOT_Y: never overwritten, so it
          * holds exactly the same pixels we base64-dump to UART. The host can
          * then assert byte-for-byte equality between the two transports. */
-        mirror_to_qemu_vram(px_map, QEMU_RGB_SNAPSHOT_Y);
-        dump_framebuffer_base64(px_map, DISP_BYTES);
+        qemu_vram_mirror(px_map, DISP_HOR_RES, DISP_VER_RES, QEMU_RGB_SNAPSHOT_Y);
+        fb_dump_base64(px_map, DISP_BYTES, DISP_HOR_RES, DISP_VER_RES);
         s_fb_dumped = true;
         ESP_LOGI(TAG, "framebuffer dump complete");
     }
@@ -193,32 +128,11 @@ void app_main(void)
     ESP_LOGI(TAG, "  M3 LVGL benchmark demo complete");
     ESP_LOGI(TAG, "========================================");
 
-    /* Day 23: keep the QEMU VRAM live mirror at y=0 content-rich for the
-     * interactive Chrome demo. We deliberately do NOT touch LVGL after the
-     * benchmark — its deferred teardown corrupts global widget state, and
-     * re-invoking lv_demo_benchmark() resets s_flush_count internally,
-     * breaking the test_qemu_boot / test_qemu_vram_file invariants.
-     *
-     * Instead, paint directly into the VRAM mmap region (RGB565). This
-     * bypasses LVGL entirely, has zero allocation, and the host fb_server
-     * sees a continuously animated frame. The frozen snapshot at y=200
-     * (the "hero scene") is preserved untouched. */
-    volatile uint16_t *vram = QEMU_RGB_VRAM_ADDR;
-    uint32_t phase = 0;
-    while (1) {
-        for (int row = 0; row < DISP_VER_RES; row++) {
-            for (int col = 0; col < DISP_HOR_RES; col++) {
-                /* Diagonal RGB565 gradient that scrolls with `phase`. Mixes
-                 * R/G/B channels so the live mirror always has many unique
-                 * colours (auto-test threshold = 8). */
-                uint8_t r = (uint8_t)((col + phase) & 0x1F);
-                uint8_t g = (uint8_t)((row * 2 + phase / 2) & 0x3F);
-                uint8_t b = (uint8_t)((col + row + phase) & 0x1F);
-                vram[row * QEMU_RGB_SURFACE_W + col] =
-                    (uint16_t)((r << 11) | (g << 5) | b);
-            }
-        }
-        phase += 2;
-        vTaskDelay(pdMS_TO_TICKS(33));   /* ~30 fps */
-    }
+    /* Day 23: keep the live mirror at y=0 content-rich for the interactive
+     * Chrome demo. We deliberately do NOT touch LVGL after the benchmark —
+     * its deferred teardown corrupts widget/heap state, and re-invoking
+     * lv_demo_benchmark() resets the flush counter, breaking
+     * test_qemu_boot / test_qemu_vram_file invariants. Direct VRAM writes
+     * bypass LVGL entirely. The frozen snapshot at y=200 is preserved. */
+    qemu_vram_gradient_loop_forever(DISP_HOR_RES, DISP_VER_RES);
 }
