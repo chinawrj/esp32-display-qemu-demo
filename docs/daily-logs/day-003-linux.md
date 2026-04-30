@@ -28,6 +28,8 @@ the design spike that Days 4–6 will implement.
    `.gitignore` for the Copilot-CLI npm noise; keep
    `docs/copilot-cli-issue-draft.md` tracked.
 
+**Shipped at f4d6fd4** (2026-04-30 evening, single commit).
+
 ## 完成状态 (evening review)
 
 | Task | Status | Notes |
