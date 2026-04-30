@@ -53,6 +53,12 @@ python3 $IDF_PATH/tools/idf_tools.py install qemu-xtensa
 . $IDF_PATH/export.sh                   # makes idf.py + qemu-system-xtensa visible
 ```
 
+> **macOS 12 (Monterey)?** The IDF-managed `qemu-xtensa` binary requires macOS
+> 13+. Build QEMU 9.2.2 locally instead — `bash tools/build-qemu.sh` patches
+> meson for Apple Clang 14 and produces `tools/qemu-src/build/qemu-system-xtensa`,
+> which `tools/run-qemu.sh` picks up automatically. The screenshot above was
+> captured end-to-end through this locally-built binary.
+
 ### Project Python environment
 
 ```bash
