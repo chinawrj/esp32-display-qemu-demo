@@ -24,17 +24,18 @@ cd "$PROJECT_DIR"
 
 MODE="interactive"
 DURATION=""
-for arg in "$@"; do
-    case "$arg" in
+while [ $# -gt 0 ]; do
+    case "$1" in
         --auto-test) MODE="auto-test" ;;
         --no-browser) MODE="no-browser" ;;
         --duration) shift; DURATION="${1:-}" ;;
-        --duration=*) DURATION="${arg#--duration=}" ;;
+        --duration=*) DURATION="${1#--duration=}" ;;
         -h|--help)
             sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
     esac
+    shift
 done
 
 VRAM_FILE="${ESP_RGB_VRAM_FILE:-/tmp/esp32-rgb-vram.bin}"

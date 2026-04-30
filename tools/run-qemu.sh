@@ -55,9 +55,12 @@ fi
 # `idf.py qemu` (no --graphics) runs headless; serial output goes to stdio.
 QEMU_CMD="idf.py qemu --qemu-extra-args=-nographic"
 if command -v gtimeout >/dev/null 2>&1; then
-    gtimeout --foreground "${DURATION}" $QEMU_CMD 2>&1 | tee "$LOG_FILE" || true
+    # -k 5: escalate to SIGKILL 5s after SIGTERM. Required on Linux where
+    # QEMU's monitor on -serial mon:stdio absorbs SIGTERM and otherwise
+    # never exits.
+    gtimeout --foreground -k 5 "${DURATION}" $QEMU_CMD 2>&1 | tee "$LOG_FILE" || true
 elif command -v timeout >/dev/null 2>&1; then
-    timeout --foreground "${DURATION}" $QEMU_CMD 2>&1 | tee "$LOG_FILE" || true
+    timeout --foreground -k 5 "${DURATION}" $QEMU_CMD 2>&1 | tee "$LOG_FILE" || true
 else
     : > "$LOG_FILE"
     $QEMU_CMD > "$LOG_FILE" 2>&1 &
