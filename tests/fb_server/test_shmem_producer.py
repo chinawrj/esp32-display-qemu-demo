@@ -103,3 +103,83 @@ def test_stream_frames_emits_init_then_updates(tmp_path: Path):
     assert init3 is not None and (init3.width, init3.height) == (8, 4)
     assert (upd3.w, upd3.h) == (8, 4)
     assert pay3 == _solid_rgb565(0xF81F, 8, 4)
+
+
+def test_read_raw_region_extracts_subrect(tmp_path: Path):
+    """Headerless surface: 8x4 surface, read 3x2 subrect at (2,1)."""
+    from tools.fb_server.shmem_producer import read_raw_region
+
+    SW, SH = 8, 4
+    # Distinct color per pixel: value = y*100 + x  (fits in 16 bits)
+    surf = bytearray(SW * SH * 2)
+    for y in range(SH):
+        for x in range(SW):
+            v = y * 100 + x
+            off = (y * SW + x) * 2
+            surf[off] = v & 0xFF
+            surf[off + 1] = (v >> 8) & 0xFF
+
+    p = tmp_path / "vram.bin"
+    p.write_bytes(bytes(surf))
+
+    out = read_raw_region(p, x=2, y=1, w=3, h=2, surface_w=SW)
+    assert out is not None
+    # Expected subrect: y=1: 102,103,104  ; y=2: 202,203,204
+    expected = bytearray()
+    for y in (1, 2):
+        for x in (2, 3, 4):
+            v = y * 100 + x
+            expected += v.to_bytes(2, "little")
+    assert out == bytes(expected)
+
+
+def test_read_raw_region_handles_missing(tmp_path: Path):
+    from tools.fb_server.shmem_producer import read_raw_region
+    assert read_raw_region(tmp_path / "nope", 0, 0, 4, 4, 8) is None
+
+
+def test_read_raw_region_handles_too_small(tmp_path: Path):
+    from tools.fb_server.shmem_producer import read_raw_region
+    p = tmp_path / "tiny.bin"
+    p.write_bytes(b"\x00" * 16)  # only 8 px worth
+    # Need (y+h)*surface_w*2 = 4*8*2 = 64 bytes — file too small.
+    assert read_raw_region(p, 0, 0, 4, 4, 8) is None
+
+
+def test_stream_raw_frames_emits_on_change(tmp_path: Path):
+    from tools.fb_server.shmem_producer import stream_raw_frames
+
+    SW, SH = 8, 4
+    p = tmp_path / "vram.bin"
+    # Frame A: surface filled with 0xAA
+    p.write_bytes(bytes([0xAA]) * (SW * SH * 2))
+
+    def writer():
+        time.sleep(0.05)
+        # Frame B: change just the top-left 4x2 region
+        buf = bytearray([0xAA]) * (SW * SH * 2)
+        for y in range(2):
+            for x in range(4):
+                off = (y * SW + x) * 2
+                buf[off] = 0x55
+                buf[off + 1] = 0x55
+        p.write_bytes(bytes(buf))
+
+    t = threading.Thread(target=writer, daemon=True)
+    t.start()
+
+    frames = list(stream_raw_frames(
+        p, x=0, y=0, w=4, h=2, surface_w=SW,
+        poll_interval_s=0.01, max_frames=2,
+    ))
+    t.join(timeout=2.0)
+
+    # Frame 1: first emit always carries FBInit.
+    init1, upd1, pay1 = frames[0]
+    assert init1 is not None and (init1.width, init1.height) == (4, 2)
+    assert pay1 == bytes([0xAA] * 16)
+
+    # Frame 2: no new FBInit (dims unchanged), payload is the new content.
+    init2, _upd2, pay2 = frames[1]
+    assert init2 is None
+    assert pay2 == bytes([0x55] * 16)

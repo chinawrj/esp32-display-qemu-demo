@@ -86,6 +86,72 @@ def read_latest(path: Path | str) -> ShmemFrame | None:
                 return None
 
 
+def read_raw_region(
+    path: Path | str,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    surface_w: int,
+) -> bytes | None:
+    """Read a w×h RGB565 sub-rect at (x,y) from a *headerless* surface file.
+
+    Used by the QEMU ``esp_rgb`` VRAM mmap path: the device exports a raw
+    ``surface_w × surface_h × 2`` byte buffer (RGB565, little-endian) at a
+    fixed file offset of zero. Returns ``None`` if the file is missing or
+    too small to cover the requested region.
+    """
+    p = Path(path)
+    if not p.exists():
+        return None
+    need = (y + h) * surface_w * 2
+    size = p.stat().st_size
+    if size < need:
+        return None
+    out = bytearray(w * h * 2)
+    row_bytes = w * 2
+    with p.open("rb") as f:
+        with mmap.mmap(f.fileno(), size, prot=mmap.PROT_READ) as mm:
+            for r in range(h):
+                src = ((y + r) * surface_w + x) * 2
+                out[r * row_bytes : (r + 1) * row_bytes] = mm[src : src + row_bytes]
+    return bytes(out)
+
+
+def stream_raw_frames(
+    path: Path | str,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    surface_w: int,
+    poll_interval_s: float = 0.1,
+    max_frames: int | None = None,
+) -> Iterator[tuple[FBInit | None, FBUpdate, bytes]]:
+    """Poll a raw VRAM file and yield frames whenever the region's bytes change.
+
+    The headerless format has no sequence counter, so we hash the region and
+    emit only on change. The first call always emits an ``FBInit``.
+    """
+    last_digest: int | None = None
+    emitted = 0
+    init_sent = False
+    while True:
+        payload = read_raw_region(path, x, y, w, h, surface_w)
+        if payload is not None:
+            digest = hash(payload)
+            if digest != last_digest:
+                init = FBInit(width=w, height=h) if not init_sent else None
+                init_sent = True
+                update = FBUpdate(x=0, y=0, w=w, h=h, payload=payload)
+                yield init, update, payload
+                last_digest = digest
+                emitted += 1
+                if max_frames is not None and emitted >= max_frames:
+                    return
+        time.sleep(poll_interval_s)
+
+
 def stream_frames(
     path: Path | str,
     poll_interval_s: float = 0.05,

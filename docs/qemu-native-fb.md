@@ -206,3 +206,43 @@ Wired LVGL `flush_cb` to mirror frames into the QEMU `esp_rgb` VRAM at guest
 This unblocks Day 20: a host-side reader for the VRAM mmap file (already
 prototyped via `tools/fb_server/shmem_producer.py`) can stream live frames
 to the Chrome canvas without touching the firmware again.
+
+## Day 20 update — host streamer wired, Chrome can render live frames ✅
+
+The host slice that was missing on Day 19 is now in place. No firmware change.
+
+* `tools/fb_server/shmem_producer.py` gained `read_raw_region()` and
+  `stream_raw_frames()` for **headerless** RGB565 surface files (the
+  `esp_rgb` VRAM mmap has no header — it's just `surface_w * surface_h * 2`
+  bytes at offset 0). Change detection is content-hash based since the
+  device exposes no sequence counter.
+* `tools/fb_server/server.py` accepts `--source raw-vram` plus
+  `--vram-path / --vram-x / --vram-y / --surface-w` and async-polls the
+  VRAM region, emitting `fb_init` once and `fb_update` only when the
+  region's bytes change.
+* New tests:
+  * `tests/fb_server/test_shmem_producer.py` — 4 new cases (subrect read,
+    missing/short file, change-driven streaming).
+  * `tests/fb_server/test_raw_vram_e2e.py` — boots the server in
+    raw-vram mode against a synthetic surface, asserts handshake,
+    payload bytes, and reaction to surface mutation.
+* Suite: **49/49** (was 44/44).
+
+### Live pipeline cookbook
+
+```bash
+# 1) Boot QEMU with the VRAM mmap export (firmware mirrors LVGL frames).
+ESP_RGB_VRAM_FILE=/tmp/esp32-rgb-vram.bin \
+  QEMU_BIN=$(pwd)/tools/qemu-src/build/qemu-system-xtensa \
+  bash tools/run-qemu.sh 150 verify
+
+# 2) Stream live VRAM frames to Chrome on http://127.0.0.1:8080
+.venv/bin/python -m tools.fb_server.server \
+  --source raw-vram \
+  --vram-path /tmp/esp32-rgb-vram.bin \
+  --vram-x 0 --vram-y 0 --surface-w 800 \
+  --width 240 --height 135 --fps 30
+```
+
+This is the first end-to-end firmware → host → browser frame pipeline
+in the project that doesn't depend on the UART base64 dump.
