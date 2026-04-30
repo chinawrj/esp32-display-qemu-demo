@@ -40,13 +40,29 @@ python3 tools/decode-fb.py /tmp/esp32-qemu-serial.log docs/screenshot.png --scal
 brew install pixman libgcrypt sdl2 tmux
 ```
 
+### Linux (Ubuntu/Debian)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential ninja-build cmake git tmux \
+    libpixman-1-dev libgcrypt20-dev libsdl2-dev \
+    libglib2.0-dev libslirp-dev pkg-config python3-venv
+```
+
+Other distributions: install equivalents of the above. The locally-built QEMU
+(`tools/build-qemu.sh`) needs `pixman`, `libgcrypt`, `sdl2`, `glib`, and
+`slirp` development headers; everything else is standard ESP-IDF.
+
 ### ESP-IDF + QEMU
 
 This project targets **ESP-IDF v5.5+** with the prebuilt Espressif QEMU.
 
 ```bash
-# 1. Install ESP-IDF (skip if you already have it)
+# 1. Install ESP-IDF v5.5+ (skip if you already have it)
 #    https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/
+#    Default expected location: $HOME/esp-idf
+#    Override with `export IDF_PATH=/your/path/to/esp-idf` if you keep it elsewhere;
+#    .env.sh and tools/*.sh both honour $IDF_PATH.
 
 # 2. Install the prebuilt qemu-xtensa via idf_tools
 python3 $IDF_PATH/tools/idf_tools.py install qemu-xtensa
@@ -58,6 +74,11 @@ python3 $IDF_PATH/tools/idf_tools.py install qemu-xtensa
 > meson for Apple Clang 14 and produces `tools/qemu-src/build/qemu-system-xtensa`,
 > which `tools/run-qemu.sh` picks up automatically. The screenshot above was
 > captured end-to-end through this locally-built binary.
+>
+> **Linux**: `tools/build-qemu.sh` works as-is (the meson/clang patch is a
+> no-op when not building under Apple Clang). The IDF-managed binary works
+> too on any reasonably recent distribution; pick whichever is more
+> convenient.
 
 ### Project Python environment
 
@@ -339,4 +360,4 @@ state) and is automatable via Chrome DevTools Protocol.
 
 ## License
 
-See `LICENSE` for details.
+MIT — see [`LICENSE`](LICENSE).

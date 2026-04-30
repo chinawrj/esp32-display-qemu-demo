@@ -71,7 +71,7 @@ fi
 
 if [ -z "${IDF_PATH:-}" ]; then
     # shellcheck disable=SC1091
-    source /Users/rjwang/esp-idf/export.sh > /dev/null 2>&1
+    source "${IDF_PATH:-$HOME/esp-idf}/export.sh" > /dev/null 2>&1
 fi
 
 # --- 1. Boot QEMU in background with VRAM mmap export ---

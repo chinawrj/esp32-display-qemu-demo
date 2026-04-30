@@ -41,7 +41,7 @@ fi
 # Ensure ESP-IDF env is sourced
 if [ -z "${IDF_PATH:-}" ]; then
     # shellcheck disable=SC1091
-    source /Users/rjwang/esp-idf/export.sh > /dev/null 2>&1
+    source "${IDF_PATH:-$HOME/esp-idf}/export.sh" > /dev/null 2>&1
 fi
 
 echo "[run-qemu] Booting QEMU for ${DURATION}s, log -> ${LOG_FILE}"
