@@ -186,3 +186,23 @@ MMIO. That switch is the next workday's deliverable.
    RGB565, repacks them into the existing `<IHH` frame header, and streams
    to Chrome.
 4. Drop the UART base64 dump path entirely.
+
+## Day 19 update — firmware writes pixels into VRAM ✅
+
+Wired LVGL `flush_cb` to mirror frames into the QEMU `esp_rgb` VRAM at guest
+`0x20000000` while keeping the existing UART base64 dump path intact.
+
+* `mirror_to_qemu_vram(px_map, dst_y)` writes 240×135 RGB565 with stride 800 px
+  via a `volatile uint16_t *` direct store.
+* Every flush mirrors at `y=0` (live preview region).
+* Flush #80 (`CAPTURE_FLUSH_INDEX`) also writes a frozen snapshot at `y=200`,
+  mirroring exactly what the UART path captures.
+* New test `tests/test_qemu_vram_file.py::test_vram_snapshot_matches_uart_dump`
+  asserts byte-equality between the snapshot region and the base64-decoded
+  UART payload — confirming no byte-order / stride / cache surprises.
+* Decoded snapshot saved to `artifacts/qemu-vram-snapshot.png`.
+* Suite: 44/44 pass (added 1, was 43).
+
+This unblocks Day 20: a host-side reader for the VRAM mmap file (already
+prototyped via `tools/fb_server/shmem_producer.py`) can stream live frames
+to the Chrome canvas without touching the firmware again.

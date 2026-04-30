@@ -74,6 +74,33 @@ static void dump_framebuffer_base64(const uint8_t *data, size_t len)
     printf("<<<FB_END>>>\n");
 }
 
+/* QEMU `esp_rgb` virtual display VRAM lives at this fixed address; matches
+ * Espressif's `esp_lcd_qemu_rgb` driver constant. The device surface is
+ * fixed at ESP_RGB_MAX_WIDTH x ESP_RGB_MAX_HEIGHT (800x600) so we render at
+ * top-left with a row-stride that skips the rest of the line. Harmless on
+ * real hardware (this region is unmapped MMIO) since we never run there. */
+#define QEMU_RGB_VRAM_ADDR    ((volatile uint16_t *)0x20000000U)
+#define QEMU_RGB_SURFACE_W    800
+/* Y-offset for the frozen snapshot region (well below the live mirror). */
+#define QEMU_RGB_SNAPSHOT_Y   200
+
+/* Copy a 240x135 RGB565 frame from LVGL into the QEMU virtual framebuffer.
+ * `dst_y` selects the destination row inside the 800x600 surface so we can
+ * keep both a "live mirror" at y=0 (overwritten every flush) and a "frozen
+ * snapshot" at y=QEMU_RGB_SNAPSHOT_Y (written only at CAPTURE_FLUSH_INDEX,
+ * matching the UART base64 dump for byte-for-byte comparability). */
+static void mirror_to_qemu_vram(const uint8_t *px_map, int dst_y)
+{
+    const uint16_t *src = (const uint16_t *)px_map;
+    volatile uint16_t *dst = QEMU_RGB_VRAM_ADDR;
+    for (int row = 0; row < DISP_VER_RES; row++) {
+        for (int col = 0; col < DISP_HOR_RES; col++) {
+            dst[(dst_y + row) * QEMU_RGB_SURFACE_W + col] =
+                src[row * DISP_HOR_RES + col];
+        }
+    }
+}
+
 static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
     if (s_flush_count < 3) {
@@ -82,11 +109,19 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
                  (int)area->x1, (int)area->y1, (int)area->x2, (int)area->y2);
     }
 
+    /* Live mirror at (0, 0): every flush overwrites this region so any host
+     * tool with the file mmap'd sees the latest LVGL frame in real time. */
+    mirror_to_qemu_vram(px_map, 0);
+
     /* Capture the framebuffer once after layout has settled. With FULL render
      * mode, px_map is the entire DISP_HOR_RES * DISP_VER_RES buffer. */
     if (!s_fb_dumped && s_flush_count == CAPTURE_FLUSH_INDEX) {
         ESP_LOGI(TAG, "capturing framebuffer at flush #%d (%d bytes)",
                  CAPTURE_FLUSH_INDEX, DISP_BYTES);
+        /* Frozen snapshot at y=QEMU_RGB_SNAPSHOT_Y: never overwritten, so it
+         * holds exactly the same pixels we base64-dump to UART. The host can
+         * then assert byte-for-byte equality between the two transports. */
+        mirror_to_qemu_vram(px_map, QEMU_RGB_SNAPSHOT_Y);
         dump_framebuffer_base64(px_map, DISP_BYTES);
         s_fb_dumped = true;
         ESP_LOGI(TAG, "framebuffer dump complete");

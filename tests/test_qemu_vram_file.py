@@ -59,3 +59,32 @@ def test_vram_file_created_when_env_set():
     with p.open("rb") as f:
         head = f.read(16)
     assert len(head) == 16
+
+
+def test_vram_snapshot_matches_uart_dump():
+    """Day-19: the firmware writes a frozen snapshot at y=200 on flush #80,
+    mirroring exactly what the existing UART base64 path dumps. Bytes must
+    match. This is the first end-to-end check that LVGL pixels reach the
+    QEMU VRAM region."""
+    import base64
+
+    vram_path = pathlib.Path(os.environ.get("ESP_RGB_VRAM_FILE", "/tmp/esp32-rgb-vram.bin"))
+    log_path = pathlib.Path(os.environ.get("ESP32_QEMU_LOG", "/tmp/esp32-qemu-serial.log"))
+    if not vram_path.exists() or not log_path.exists():
+        pytest.skip("VRAM file or QEMU log not present — run instrumented boot first")
+
+    W, H, STRIDE, SY = 240, 135, 800, 200
+    raw = vram_path.read_bytes()
+    snap = bytearray()
+    for row in range(H):
+        base = (SY + row) * STRIDE * 2
+        snap += raw[base : base + W * 2]
+
+    fb = bytearray()
+    for line in log_path.read_text(errors="ignore").splitlines():
+        if line.startswith("FB="):
+            fb += base64.b64decode(line[3:].strip())
+
+    assert len(snap) == W * H * 2 == len(fb), (len(snap), len(fb))
+    assert bytes(fb) == bytes(snap), "UART-decoded framebuffer != VRAM snapshot region"
+    assert any(b for b in snap), "snapshot region is all-zero — firmware mirror not running"
