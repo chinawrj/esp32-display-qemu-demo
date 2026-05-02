@@ -71,3 +71,19 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: When Day 3 started, three `bash tools/run-qemu.sh 90 verify` invocations from the previous evening were still running with their `qemu-system-xtensa` children — ELAPSED 8h+. Reason: `timeout(1)` sends `SIGTERM` to its direct child (`idf.py`, a Python wrapper). `idf.py` shells out to `qemu-system-xtensa` via `subprocess.Popen`; on receiving `SIGTERM` `idf.py` exits, but the QEMU child is not in `idf.py`'s process-group destruction path, so it reparents to PID 1 and keeps writing pixels into `/tmp/esp32-rgb-vram.bin` until killed manually. The `RUN_QEMU_SENTINEL` echoes promptly (the `tee` pipeline closes), so an Agent watching for the sentinel believes the run finished cleanly — the next pytest run sees stale state.
 - **Workaround**: After every `tools/run-qemu.sh` invocation, run `pkill -f qemu-system-xtensa` defensively before any test that touches `/tmp/esp32-rgb-vram.bin`. Long-term fix: change `run-qemu.sh` to either (a) launch `qemu-system-xtensa` directly (bypassing `idf.py qemu`) so `timeout` can SIGKILL the actual emulator, or (b) wrap the `idf.py qemu` call in `setsid bash -c '… ; pkill -P $$ qemu-system-xtensa'` so the orphan is reaped by its session leader. The `tmux-multi-shell` skill should also document the "orphan-after-sentinel" hazard so Agents don't trust the sentinel as proof the underlying device shut down.
 - **Priority**: medium
+
+### FB-009 (2026-05-02)
+- **Skill**: project-scaffolding / tools/build-qemu.sh
+- **Category**: improvement
+- **Summary**: `tools/qemu-src/` is gitignored; direct edits to source files there are lost on clean clone — all patches must go through `build-qemu.sh`.
+- **Detail**: Day 4 initially edited `tools/qemu-src/hw/display/esp_rgb.c` directly to add WS hook calls, but `tools/qemu-src/` is listed in `.gitignore`. Those edits are not reproducible from a fresh clone. The correct pattern (already used for `ESP_RGB_VRAM_FILE_PATCH`) is to encode the change as an idempotent Python-heredoc block in `build-qemu.sh`, guarded by a marker string (`grep -q "ESP_RGB_WS_PATCH" hw/display/esp_rgb.c`). Large new source files (e.g. `esp_rgb_ws.c`) go into the tracked `tools/qemu-src-patches/` tree and are copied in by `build-qemu.sh`.
+- **Workaround**: Encode all `esp_rgb.c` modifications in `build-qemu.sh`; put new .c/.h files in `tools/qemu-src-patches/` (tracked by git).
+- **Priority**: medium
+
+### FB-010 (2026-05-02)
+- **Skill**: automated-testing / pytest fixtures
+- **Category**: bug
+- **Summary**: pytest `scope="module"` fixture calling `proc.terminate()` on QEMU with `-serial mon:stdio` does not reliably kill the process; orphan QEMU survives until `pkill`.
+- **Detail**: The `qemu_ws_proc` fixture in `tests/test_qemu_ws_handshake.py` launches QEMU with `-serial mon:stdio` (required so the QEMU monitor is connected and the guest serial output flows through stdio). QEMU's built-in monitor absorbs SIGTERM, so `proc.terminate()` + `proc.wait(timeout=5)` leaves QEMU running. Post-test `ps aux | grep qemu-system-xtensa` revealed the orphan. SIGKILL in the `except TimeoutExpired` branch fires correctly, but only after 5 s delay. Using `-serial null` instead of `-serial mon:stdio` for WS-only tests would avoid the issue, since the test doesn't need the UART serial output.
+- **Workaround**: Preemptively `pkill -f qemu-system-xtensa` before each full suite run. Day 5 fix: change the fixture to pass `-serial null` (or `/dev/null`) instead of `mon:stdio`; this removes the monitor mux and allows SIGTERM to land on the QEMU main loop directly.
+- **Priority**: medium
