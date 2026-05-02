@@ -38,8 +38,10 @@ if [ ! -f build/esp32-display-qemu-demo.bin ]; then
     exit 2
 fi
 
-# Ensure ESP-IDF env is sourced
-if [ -z "${IDF_PATH:-}" ]; then
+# Ensure ESP-IDF env is sourced (also re-source if IDF_PATH is set but idf.py
+# is not on PATH, e.g. after `source export.sh` in a parent shell that did not
+# export the derived PATH to sub-processes).
+if [ -z "${IDF_PATH:-}" ] || ! command -v idf.py >/dev/null 2>&1; then
     # shellcheck disable=SC1091
     source "${IDF_PATH:-$HOME/esp-idf}/export.sh" > /dev/null 2>&1
 fi

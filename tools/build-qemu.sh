@@ -99,6 +99,104 @@ p.write_text(src.replace(old, new, 1))
 PY
 fi
 
+# ESP_RGB_WS_PATCH (NEXT-001): install esp_rgb_ws.{c,h} from the
+# tracked tools/qemu-src-patches/ tree and add the new source to
+# hw/display/meson.build. Both steps are idempotent. Canonical sources
+# live in the repo so a fresh clone of qemu-src reproduces today's
+# binary. See docs/qemu-native-ws.md.
+PATCH_ROOT="$(cd "$SRC_DIR/.." && pwd)/qemu-src-patches"
+if [ -d "$PATCH_ROOT" ]; then
+  echo "[build-qemu] installing ESP_RGB_WS_PATCH source files"
+  install -m 0644 "$PATCH_ROOT/hw/display/esp_rgb_ws.c" \
+    "$SRC_DIR/hw/display/esp_rgb_ws.c"
+  install -m 0644 "$PATCH_ROOT/include/hw/display/esp_rgb_ws.h" \
+    "$SRC_DIR/include/hw/display/esp_rgb_ws.h"
+
+  if ! grep -q "esp_rgb_ws.c" "$SRC_DIR/hw/display/meson.build"; then
+    echo "[build-qemu] patching hw/display/meson.build: register esp_rgb_ws.c"
+    # macOS sed needs an explicit backup-suffix arg
+    sed -i.bak \
+      -e "s|files('esp_rgb.c')|files('esp_rgb.c', 'esp_rgb_ws.c')|" \
+      "$SRC_DIR/hw/display/meson.build"
+  fi
+fi
+
+# ESP_RGB_WS_PATCH hooks in esp_rgb.c: idempotently add the include and
+# the three esp_rgb_ws_*() call-sites. Marker: ESP_RGB_WS_PATCH.
+if [ -f "$SRC_DIR/hw/display/esp_rgb.c" ] && \
+   ! grep -q "ESP_RGB_WS_PATCH" "$SRC_DIR/hw/display/esp_rgb.c"; then
+  echo "[build-qemu] patching hw/display/esp_rgb.c: inject ESP_RGB_WS_PATCH hooks"
+  python3 - <<'PY'
+import pathlib
+p = pathlib.Path("hw/display/esp_rgb.c")
+src = p.read_text()
+
+# 1. Add include after sysemu/dma.h
+src = src.replace(
+    '#include "sysemu/dma.h"\n\n#define RGB_WARNING',
+    '#include "sysemu/dma.h"\n'
+    '/* ESP_RGB_WS_PATCH (NEXT-001): WebSocket framebuffer export */\n'
+    '#include "hw/display/esp_rgb_ws.h"\n\n'
+    '#define RGB_WARNING',
+    1,
+)
+
+# 2. Add announce_surface call in update_rgb_surface()
+src = src.replace(
+    '    surface->flags = QEMU_ALLOCATED_FLAG;\n'
+    '    dpy_gfx_replace_surface(s->con, surface);\n'
+    '};',
+    '    surface->flags = QEMU_ALLOCATED_FLAG;\n'
+    '    dpy_gfx_replace_surface(s->con, surface);\n'
+    '    /* ESP_RGB_WS_PATCH: notify clients that DisplaySurface format/size changed */\n'
+    '    esp_rgb_ws_announce_surface(s);\n'
+    '};',
+    1,
+)
+
+# 3. Add broadcast_frame call after dpy_gfx_update in rgb_update()
+src = src.replace(
+    '            dpy_gfx_update(s->con, s->from_x, s->from_y, width, height);\n'
+    '        }\n'
+    '#if RGB_WARNING\n'
+    '        else {\n'
+    '            warn_report("[ESP RGB] Invalid drawing area");\n'
+    '        }\n'
+    '#endif\n'
+    '\n'
+    '        /* Automatically clear the update flag',
+    '            dpy_gfx_update(s->con, s->from_x, s->from_y, width, height);\n'
+    '            /* ESP_RGB_WS_PATCH: push updated pixels to WS clients */\n'
+    '            esp_rgb_ws_broadcast_frame(s);\n'
+    '        }\n'
+    '#if RGB_WARNING\n'
+    '        else {\n'
+    '            warn_report("[ESP RGB] Invalid drawing area");\n'
+    '        }\n'
+    '#endif\n'
+    '\n'
+    '        /* Automatically clear the update flag',
+    1,
+)
+
+# 4. Add esp_rgb_ws_start() at end of esp_rgb_init()
+src = src.replace(
+    '    /* Create an AddressSpace out of the MemoryRegion to be able to perform DMA */\n'
+    '    address_space_init(&s->vram_as, &s->vram, "esp.rgb.vram_as");\n'
+    '}',
+    '    /* Create an AddressSpace out of the MemoryRegion to be able to perform DMA */\n'
+    '    address_space_init(&s->vram_as, &s->vram, "esp.rgb.vram_as");\n'
+    '\n'
+    '    /* ESP_RGB_WS_PATCH: open WebSocket listener (no-op if ESP_RGB_WS_DISABLE set) */\n'
+    '    esp_rgb_ws_start(s);\n'
+    '}',
+    1,
+)
+
+p.write_text(src)
+PY
+fi
+
 # Only init submodules required for xtensa-softmmu. Skipping the giant
 # edk2/SeaBIOS/etc. roms saves >2 GB and many minutes of cloning.
 SUBMODULES_NEEDED=(
