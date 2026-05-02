@@ -88,10 +88,12 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Workaround**: Preemptively `pkill -f qemu-system-xtensa` before each full suite run. Day 5 fix: change the fixture to pass `-serial null` (or `/dev/null`) instead of `mon:stdio`; this removes the monitor mux and allows SIGTERM to land on the QEMU main loop directly.
 - **Priority**: medium
 
-### FB-011 (2026-05-02)
-- **Skill**: automated-testing / websockets client configuration
-- **Category**: bug
-- **Summary**: Python `websockets` default `max_size=1_048_576` (1 MB) silently rejects frames larger than 1 MB with a `1009 message too big` close frame.
-- **Detail**: Day 5 `test_ws_first_pixel_frame` kept timing out. QEMU logs showed `broadcast_frame()` successfully sending seq=0..20 frames (500ms apart), but Python closed the connection with status 1009 before reading the first frame. The QEMU `esp_rgb` default surface is 800×600×4 = 1,920,000 bytes; the WS frame payload is 1,920,008 bytes — 83% above the `websockets` default 1 MB limit. The root cause was invisible from the server side: QEMU's `write_all` succeeded (TCP buffer accepted the data), but Python's library sent a `1009` close frame immediately on receipt. The test saw a `ConnectionClosedError` at `recv()` rather than a timeout-style error, which was misleading.
-- **Workaround**: Add `max_size=None` to all `ws_connect()` / `websockets.connect()` calls whenever the server may send frames > 1 MB. For production use, set `max_size` to a calculated upper bound (`w * h * bpp + 16`) rather than `None`.
 - **Priority**: medium
+
+### FB-012 (2026-05-03)
+- **Skill**: esp32-build-flash / QEMU VRAM read API
+- **Category**: bug
+- **Summary**: `address_space_rw(&s->vram_as, 0, ...)` returns all-zeros after `memory_region_add_subregion_overlap()` maps the same MemoryRegion into `sys_mem`.
+- **Detail**: Day 6 first fix for blank WS frames used `address_space_rw(&s->vram_as, 0, MEMTXATTRS_UNSPECIFIED, pixels, pixel_size, false)`. Despite the VRAM file having content (15,120 nonzero pixels), this call returned all-zeros. Root cause: in `esp32.c`, `memory_region_add_subregion_overlap(sys_mem, 0x20000000, &s->rgb.vram, 0)` sets `s->vram->container = sys_mem` and triggers a QEMU-internal flatview invalidation for all address spaces that reference `s->vram`. The flatview for `s->vram_as` (whose root IS `s->vram`) gets invalidated; subsequent `address_space_rw()` calls recompute it with `s->vram` in a partially-added state, yielding zero-length or unmapped flatview entries. The result is a silent zero-fill of the read buffer. This is a QEMU API footgun: when a MemoryRegion is used as BOTH the root of a private AddressSpace AND a subregion of a container AddressSpace, the private flatview becomes unreliable after the container mapping.
+- **Workaround**: Use `memory_region_get_ram_ptr(&s->vram)` + `memcpy()` to read VRAM. This bypasses address-space translation entirely and directly dereferences the host-side RAM pointer. Always valid for RAM regions created with `memory_region_init_ram()` or `memory_region_init_ram_from_file()`. The fix: `void *vram_raw = memory_region_get_ram_ptr(&s->vram); memcpy(pixels, vram_raw, pixel_size);`
+- **Priority**: high
