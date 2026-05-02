@@ -1,0 +1,12 @@
+menu "Virtual Wi-Fi (QEMU)"
+
+    config ESP_WIFI_QEMU
+        bool "Enable virtual Wi-Fi driver for QEMU"
+        default n
+        help
+            Replaces the real Wi-Fi blob driver with a lightweight MMIO shim
+            that bridges to the host wpa_supplicant daemon via Unix ctrl socket.
+            Enable this option only when targeting the Espressif QEMU fork.
+            Must NOT be enabled for real hardware builds.
+
+endmenu
