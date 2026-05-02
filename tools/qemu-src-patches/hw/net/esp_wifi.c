@@ -107,6 +107,19 @@ static void wpa_parse_status(ESPWifiState *s, const char *buf)
     }
 }
 
+/**
+ * g_timeout_add callback: post WIFI_EVT_GOT_IP after CONNECTED has been ACKed.
+ * Returns FALSE so the timer fires only once.
+ */
+static gboolean esp_wifi_post_got_ip_cb(gpointer data)
+{
+    ESPWifiState *s = ESP_WIFI(data);
+    if (s->ip_addr) {
+        esp_wifi_post_event(s, WIFI_EVT_GOT_IP);
+    }
+    return FALSE;
+}
+
 static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
 {
     (void)len;
@@ -249,7 +262,11 @@ static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
         wpa_parse_status(s, buf);
         esp_wifi_post_event(s, WIFI_EVT_CONNECTED);
         if (s->ip_addr) {
-            esp_wifi_post_event(s, WIFI_EVT_GOT_IP);
+            /*
+             * Delay GOT_IP by 300 ms so the firmware has time to ACK
+             * WIFI_EVT_CONNECTED before we overwrite the event register.
+             */
+            g_timeout_add(300, esp_wifi_post_got_ip_cb, s);
         }
         s->conn_state = WPA_CONN_CONNECTED;
         break;

@@ -6,18 +6,18 @@
  * It replaces the real Wi-Fi blob driver with MMIO writes to the
  * QEMU esp_wifi virtual device (docs/qemu-wifi.md).
  *
- * Implementation status (Day 10):
+ * Implementation status (Day 11):
  *   [x] esp_wifi_init / esp_wifi_deinit
  *   [x] esp_wifi_set_mode / esp_wifi_get_mode
- *   [x] esp_wifi_start / esp_wifi_stop
+ *   [x] esp_wifi_start / esp_wifi_stop        (posts WIFI_EVENT_STA_START/STOP)
  *   [x] esp_wifi_set_config / esp_wifi_get_config  (MMIO SSID/PASS write)
- *   [x] esp_wifi_connect / esp_wifi_disconnect
+ *   [x] esp_wifi_connect / esp_wifi_disconnect (async; event task delivers events)
  *   [x] esp_wifi_get_mac / esp_wifi_set_mac        (CMD_GET_MAC + sysfs)
  *   [x] esp_wifi_scan_start / esp_wifi_scan_stop
  *   [x] esp_wifi_scan_get_ap_num / ap_records      (MMIO scan register read)
  *   [x] wifi_qemu_send_cmd() — real MMIO polling loop
- *   [ ] IRQ / event dispatch loop (Day 11+)
- *   [ ] esp_netif binding (Day 11+)
+ *   [x] Event dispatch task — CONNECTED / GOT_IP / DISCONNECTED / SCAN_DONE
+ *   [x] esp_netif binding — set IP info on WIFI_STA_DEF netif after GOT_IP
  */
 
 #include "sdkconfig.h"
@@ -29,9 +29,12 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_netif.h"
 #include "esp_wifi_qemu.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "wifi_qemu";
 
@@ -39,9 +42,17 @@ static const char *TAG = "wifi_qemu";
 /*  Internal state                                                      */
 /* ------------------------------------------------------------------ */
 
-static bool          s_inited  = false;
-static wifi_mode_t   s_mode    = WIFI_MODE_NULL;
-static wifi_config_t s_sta_cfg = {};
+static bool          s_inited     = false;
+static wifi_mode_t   s_mode       = WIFI_MODE_NULL;
+static wifi_config_t s_sta_cfg    = {};
+static TaskHandle_t  s_evt_task   = NULL;
+static esp_netif_t  *s_sta_netif  = NULL;
+
+/* ------------------------------------------------------------------ */
+/*  Forward declarations                                               */
+/* ------------------------------------------------------------------ */
+
+static void wifi_event_task(void *arg);
 
 /* ------------------------------------------------------------------ */
 /*  Helper: send a command and poll for completion                      */
@@ -77,6 +88,103 @@ esp_err_t wifi_qemu_send_cmd(uint32_t cmd, uint32_t timeout_ms)
 /*  esp_wifi_* API implementation                                       */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/*  Async event dispatch task                                           */
+/*                                                                      */
+/*  Monitors WIFI_REG_EVENT for events posted by the QEMU device that  */
+/*  are NOT consumed by wifi_qemu_send_cmd (i.e., events arising from  */
+/*  CMD_CONNECT and CMD_DISCONNECT which are non-blocking).            */
+/*                                                                      */
+/*  Synchronous commands (INIT, START, STOP, GET_MAC) are handled by  */
+/*  wifi_qemu_send_cmd() which ACKs the event before returning, and   */
+/*  the calling API function posts the ESP event inline.               */
+/* ------------------------------------------------------------------ */
+
+static void wifi_event_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint32_t evt = wifi_qemu_read(WIFI_REG_EVENT);
+        if (evt == WIFI_EVT_NONE) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        wifi_qemu_write(WIFI_REG_EVENT, 0); /* ACK */
+        ESP_LOGD(TAG, "async event 0x%02" PRIx32, evt);
+
+        switch (evt) {
+        case WIFI_EVT_CONNECTED: {
+            wifi_event_sta_connected_t ev = {
+                .ssid_len = s_sta_cfg.sta.ssid_len,
+                .channel  = 1,
+                .authmode = WIFI_AUTH_WPA2_PSK,
+                .aid      = 1,
+            };
+            memcpy(ev.ssid, s_sta_cfg.sta.ssid, ev.ssid_len);
+            esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED,
+                           &ev, sizeof(ev), portMAX_DELAY);
+            break;
+        }
+        case WIFI_EVT_GOT_IP: {
+            uint32_t ip   = wifi_qemu_read(WIFI_REG_IP_ADDR);
+            uint32_t mask = wifi_qemu_read(WIFI_REG_IP_MASK);
+            uint32_t gw   = wifi_qemu_read(WIFI_REG_IP_GW);
+
+            /* Resolve netif once, cache pointer */
+            if (!s_sta_netif) {
+                s_sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            }
+            if (s_sta_netif) {
+                esp_netif_ip_info_t ip_info = {};
+                ip_info.ip.addr      = ip;
+                ip_info.netmask.addr = mask;
+                ip_info.gw.addr      = gw;
+                esp_netif_set_ip_info(s_sta_netif, &ip_info);
+            }
+
+            ip_event_got_ip_t got_ip = {
+                .esp_netif  = s_sta_netif,
+                .ip_changed = true,
+            };
+            got_ip.ip_info.ip.addr      = ip;
+            got_ip.ip_info.netmask.addr = mask;
+            got_ip.ip_info.gw.addr      = gw;
+            ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&got_ip.ip_info.ip));
+            esp_event_post(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                           &got_ip, sizeof(got_ip), portMAX_DELAY);
+            break;
+        }
+        case WIFI_EVT_DISCONNECTED: {
+            wifi_event_sta_disconnected_t ev = {
+                .ssid_len = s_sta_cfg.sta.ssid_len,
+                .reason   = WIFI_REASON_ASSOC_LEAVE,
+                .rssi     = 0,
+            };
+            memcpy(ev.ssid, s_sta_cfg.sta.ssid, ev.ssid_len);
+            esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED,
+                           &ev, sizeof(ev), portMAX_DELAY);
+            break;
+        }
+        case WIFI_EVT_SCAN_DONE: {
+            wifi_event_sta_scan_done_t ev = {
+                .status  = 0,
+                .number  = (uint8_t)wifi_qemu_read(WIFI_REG_SCAN_COUNT),
+                .scan_id = 0,
+            };
+            esp_event_post(WIFI_EVENT, WIFI_EVENT_SCAN_DONE,
+                           &ev, sizeof(ev), portMAX_DELAY);
+            break;
+        }
+        case WIFI_EVT_ERROR:
+            ESP_LOGE(TAG, "device error event");
+            break;
+        default:
+            /* INIT_DONE, START_DONE, STOP_DONE handled by wifi_qemu_send_cmd */
+            break;
+        }
+    }
+}
+
 esp_err_t esp_wifi_init(const wifi_init_config_t *config)
 {
     (void)config;
@@ -87,6 +195,11 @@ esp_err_t esp_wifi_init(const wifi_init_config_t *config)
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_INIT, 2000);
     if (ret == ESP_OK) {
         s_inited = true;
+        /* Start the async event dispatch task */
+        if (!s_evt_task) {
+            xTaskCreate(wifi_event_task, "wifi_evt", 4096, NULL,
+                        tskIDLE_PRIORITY + 2, &s_evt_task);
+        }
     }
     return ret;
 }
@@ -95,6 +208,10 @@ esp_err_t esp_wifi_deinit(void)
 {
     if (!s_inited) {
         return ESP_ERR_INVALID_STATE;
+    }
+    if (s_evt_task) {
+        vTaskDelete(s_evt_task);
+        s_evt_task = NULL;
     }
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_DEINIT, 1000);
     s_inited = false;
@@ -126,13 +243,23 @@ esp_err_t esp_wifi_get_mode(wifi_mode_t *mode)
 esp_err_t esp_wifi_start(void)
 {
     ESP_LOGI(TAG, "start");
-    return wifi_qemu_send_cmd(WIFI_CMD_START, 3000);
+    esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 3000);
+    if (ret == ESP_OK) {
+        esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START, NULL, 0,
+                       portMAX_DELAY);
+    }
+    return ret;
 }
 
 esp_err_t esp_wifi_stop(void)
 {
     ESP_LOGI(TAG, "stop");
-    return wifi_qemu_send_cmd(WIFI_CMD_STOP, 3000);
+    esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_STOP, 3000);
+    if (ret == ESP_OK) {
+        esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_STOP, NULL, 0,
+                       portMAX_DELAY);
+    }
+    return ret;
 }
 
 esp_err_t esp_wifi_set_config(wifi_interface_t interface, wifi_config_t *conf)
@@ -179,14 +306,22 @@ esp_err_t esp_wifi_get_config(wifi_interface_t interface, wifi_config_t *conf)
 
 esp_err_t esp_wifi_connect(void)
 {
+    /*
+     * Non-blocking: write CMD_CONNECT and return immediately.
+     * The event dispatch task delivers WIFI_EVENT_STA_CONNECTED and
+     * IP_EVENT_STA_GOT_IP asynchronously as the QEMU device progresses
+     * through the wpa_supplicant connection sequence.
+     */
     ESP_LOGI(TAG, "connect SSID=%s", s_sta_cfg.sta.ssid);
-    return wifi_qemu_send_cmd(WIFI_CMD_CONNECT, 30000);
+    wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_CONNECT);
+    return ESP_OK;
 }
 
 esp_err_t esp_wifi_disconnect(void)
 {
     ESP_LOGI(TAG, "disconnect");
-    return wifi_qemu_send_cmd(WIFI_CMD_DISCONNECT, 5000);
+    wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_DISCONNECT);
+    return ESP_OK;
 }
 
 esp_err_t esp_wifi_get_mac(wifi_interface_t ifx, uint8_t mac[6])
