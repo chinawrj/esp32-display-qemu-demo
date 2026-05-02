@@ -250,3 +250,161 @@ def wifi_ssid() -> str:
 @pytest.fixture
 def wifi_password() -> str:
     return os.environ.get("WIFI_PASSWORD", "")
+
+
+# ---------------------------------------------------------------------------
+# Mock wpa_supplicant unit tests (no real hardware needed)
+# ---------------------------------------------------------------------------
+
+MOCK_CTRL_PATH = "/tmp/mock-wpa-ctrl-test"
+MOCK_CLIENT_PATH = "/tmp/mock-wpa-ctrl-test-client"
+MOCK_IP = "192.168.99.1"
+MOCK_SSID = "MockAP"
+
+
+@pytest.fixture
+def mock_wpa():
+    """Start a mock wpa_supplicant daemon, yield, then stop it."""
+    import sys
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    from mock_wpa_supplicant import MockWpaSupplicant  # type: ignore
+
+    daemon = MockWpaSupplicant(
+        ctrl_path=MOCK_CTRL_PATH,
+        ssid=MOCK_SSID,
+        ip=MOCK_IP,
+        scan_delay=0.05,
+        connect_delay=0.1,
+    )
+    daemon.start()
+    yield daemon
+    daemon.stop()
+    for p in (MOCK_CTRL_PATH, MOCK_CLIENT_PATH):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+
+
+def _client_socket() -> socket.socket:
+    """Create and bind a Unix DGRAM client socket."""
+    import socket as _s
+    sock = _s.socket(_s.AF_UNIX, _s.SOCK_DGRAM)
+    sock.settimeout(3)
+    try:
+        os.unlink(MOCK_CLIENT_PATH)
+    except OSError:
+        pass
+    sock.bind(MOCK_CLIENT_PATH)
+    return sock
+
+
+# Import socket at module level so fixtures can use it
+import socket
+
+
+class TestMockWpaSupplicant:
+    """Unit tests for the mock wpa_supplicant ctrl daemon (no QEMU needed)."""
+
+    def test_mock_script_exists(self):
+        """mock-wpa-supplicant.py must be present in tools/."""
+        script = PROJECT_ROOT / "tools" / "mock-wpa-supplicant.py"
+        assert script.is_file(), f"Missing: {script}"
+        assert os.access(str(script), os.X_OK), f"Not executable: {script}"
+
+    def test_mock_wpa_attach(self, mock_wpa):
+        """ATTACH command must return OK."""
+        sock = _client_socket()
+        sock.connect(MOCK_CTRL_PATH)
+        sock.send(b"ATTACH")
+        resp = sock.recv(64)
+        sock.close()
+        assert resp.startswith(b"OK"), f"Expected OK, got: {resp!r}"
+
+    def test_mock_wpa_scan_results(self, mock_wpa):
+        """SCAN_RESULTS must return our configured fake SSID."""
+        sock = _client_socket()
+        sock.connect(MOCK_CTRL_PATH)
+        sock.send(b"SCAN_RESULTS")
+        resp = sock.recv(512).decode()
+        sock.close()
+        assert MOCK_SSID in resp, (
+            f"Expected SSID '{MOCK_SSID}' in SCAN_RESULTS, got: {resp!r}"
+        )
+
+    def test_mock_wpa_add_network(self, mock_wpa):
+        """ADD_NETWORK must return a numeric network ID."""
+        sock = _client_socket()
+        sock.connect(MOCK_CTRL_PATH)
+        sock.send(b"ADD_NETWORK")
+        resp = sock.recv(64).decode().strip()
+        sock.close()
+        assert resp.isdigit(), f"Expected numeric ID, got: {resp!r}"
+
+    def test_mock_wpa_status_returns_ip(self, mock_wpa):
+        """STATUS response must contain ip_address=<configured IP>."""
+        sock = _client_socket()
+        sock.connect(MOCK_CTRL_PATH)
+        sock.send(b"STATUS")
+        resp = sock.recv(512).decode()
+        sock.close()
+        assert f"ip_address={MOCK_IP}" in resp, (
+            f"Expected ip_address={MOCK_IP} in STATUS, got: {resp!r}"
+        )
+
+    def test_mock_wpa_full_connect_flow(self, mock_wpa):
+        """Exercise the complete connection sequence used by the QEMU device.
+
+        ATTACH → SCAN (wait for event) → SCAN_RESULTS → ADD_NETWORK
+        → SET_NETWORK ssid → SET_NETWORK psk → SELECT_NETWORK
+        → wait CTRL-EVENT-CONNECTED → STATUS → assert ip_address present.
+        """
+        import socket as _s
+
+        # Use a fresh socket that is NOT connected (so we receive events
+        # via recvfrom which returns the sender's address too)
+        if os.path.exists(MOCK_CLIENT_PATH):
+            os.unlink(MOCK_CLIENT_PATH)
+        client = _s.socket(_s.AF_UNIX, _s.SOCK_DGRAM)
+        client.settimeout(5)
+        client.bind(MOCK_CLIENT_PATH)
+
+        def cmd(c: str) -> str:
+            client.sendto(c.encode(), MOCK_CTRL_PATH)
+            data, _ = client.recvfrom(4096)
+            return data.decode().strip()
+
+        try:
+            assert cmd("ATTACH").startswith("OK")
+            assert cmd("SCAN").startswith("OK")
+
+            # Wait for CTRL-EVENT-SCAN-RESULTS
+            scan_done = client.recvfrom(256)[0].decode()
+            assert "SCAN-RESULTS" in scan_done, (
+                f"Expected CTRL-EVENT-SCAN-RESULTS, got: {scan_done!r}"
+            )
+
+            scan_r = cmd("SCAN_RESULTS")
+            assert MOCK_SSID in scan_r
+
+            net_id = int(cmd("ADD_NETWORK"))
+            assert net_id >= 0
+
+            assert cmd(f'SET_NETWORK {net_id} ssid "{MOCK_SSID}"').startswith("OK")
+            assert cmd(f'SET_NETWORK {net_id} psk "testpass"').startswith("OK")
+            assert cmd(f"SELECT_NETWORK {net_id}").startswith("OK")
+
+            # Wait for CTRL-EVENT-CONNECTED
+            ev = client.recvfrom(256)[0].decode()
+            assert "CONNECTED" in ev, f"Expected CONNECTED event, got: {ev!r}"
+
+            status = cmd("STATUS")
+            assert f"ip_address={MOCK_IP}" in status, (
+                f"Expected ip_address={MOCK_IP} in STATUS, got: {status!r}"
+            )
+        finally:
+            client.close()
+            try:
+                os.unlink(MOCK_CLIENT_PATH)
+            except OSError:
+                pass

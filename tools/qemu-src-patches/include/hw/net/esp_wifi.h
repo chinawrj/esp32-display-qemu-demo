@@ -121,7 +121,26 @@ typedef struct ESPWifiState {
     uint32_t            scan_idx;
     ESPWifiScanResult   scan_results[ESP_WIFI_MAX_SCAN_RESULTS];
 
-    /* --- wpa_supplicant async I/O (Day 10+) --- */
-    /* GIOChannel *ctrl_chan;  <-- to be added */
-    /* guint       ctrl_watch; <-- to be added */
+    /* --- wpa_supplicant async I/O --- */
+    int         ctrl_fd;            /**< Unix DGRAM ctrl socket, -1 = closed */
+    char        ctrl_local[64];     /**< bound client path /tmp/qemu_wifi_PID_FD */
+    GIOChannel *ctrl_chan;          /**< GLib I/O channel wrapping ctrl_fd */
+    guint       ctrl_watch;         /**< g_io_add_watch source tag */
+    int         net_id;             /**< ADD_NETWORK id returned by wpa_supplicant */
+    int         conn_state;         /**< WpaConnState (see below) */
 } ESPWifiState;
+
+/* ---------- wpa_supplicant connection-sequencing state -------------------- */
+typedef enum {
+    WPA_CONN_NONE = 0,
+    WPA_CONN_ATTACH_SENT,
+    WPA_CONN_IDLE,              /**< attached, ready */
+    WPA_CONN_SCAN_SENT,
+    WPA_CONN_SCAN_RESULTS_SENT,
+    WPA_CONN_ADD_NET_SENT,
+    WPA_CONN_SET_SSID_SENT,
+    WPA_CONN_SET_PSK_SENT,
+    WPA_CONN_SELECT_SENT,
+    WPA_CONN_GETTING_STATUS,
+    WPA_CONN_CONNECTED,
+} WpaConnState;
