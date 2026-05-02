@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>QEMU Direct WS Canvas — NEXT-001</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #111;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 16px;
+      font-family: monospace;
+      color: #ccc;
+      min-height: 100vh;
+    }
+    h1 { font-size: 14px; color: #888; }
+    #status {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #333;
+    }
+    #status.connected { background: #1a3a1a; color: #4f4; }
+    #status.error     { background: #3a1a1a; color: #f44; }
+    #info { font-size: 11px; color: #666; height: 14px; }
+    canvas {
+      border: 1px solid #444;
+      image-rendering: pixelated;
+      max-width: min(100vw - 32px, 900px);
+    }
+  </style>
+</head>
+<body>
+  <h1>QEMU esp_rgb WebSocket canvas (NEXT-001)</h1>
+  <div id="status">connecting…</div>
+  <div id="info"></div>
+  <canvas id="fb"></canvas>
+
+  <script>
+    // ---------------------------------------------------------------------------
+    // Configuration — port from URL ?port=9334
+    // ---------------------------------------------------------------------------
+    const params  = new URLSearchParams(location.search);
+    const wsPort  = params.get('port') || '9334';
+    const wsUrl   = `ws://127.0.0.1:${wsPort}/`;
+
+    const canvas   = document.getElementById('fb');
+    const ctx      = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const infoEl   = document.getElementById('info');
+
+    // ---------------------------------------------------------------------------
+    // FPS counter
+    // ---------------------------------------------------------------------------
+    let frameCount  = 0;
+    let fpsRefTime  = Date.now();
+    setInterval(() => {
+      const now     = Date.now();
+      const elapsed = (now - fpsRefTime) / 1000;
+      if (elapsed >= 1 && header) {
+        infoEl.textContent =
+          `${header.w}×${header.h} ${header.format} | ` +
+          `${(frameCount / elapsed).toFixed(1)} fps`;
+        frameCount = 0;
+        fpsRefTime = now;
+      }
+    }, 200);
+
+    // ---------------------------------------------------------------------------
+    // Pixel format decoders
+    // ---------------------------------------------------------------------------
+
+    // x8r8g8b8 (PIXMAN_x8r8g8b8, LE host):
+    //   memory layout: [B, G, R, X] per pixel  →  ImageData RGBA [R, G, B, 255]
+    function decodeXRGB8888(buf, w, h) {
+      const out = new Uint8ClampedArray(w * h * 4);
+      const src = new Uint8Array(buf);
+      for (let i = 0; i < w * h; i++) {
+        const base = i * 4;
+        out[base + 0] = src[base + 2];  // R
+        out[base + 1] = src[base + 1];  // G
+        out[base + 2] = src[base + 0];  // B
+        out[base + 3] = 255;
+      }
+      return new ImageData(out, w, h);
+    }
+
+    // r5g6b5 (PIXMAN_r5g6b5, LE host):
+    //   16-bit LE word: [rrrrrggg gggbbbbb]  →  bit-replicate to 8-bit channels
+    function decodeR5G6B5(buf, w, h) {
+      const out  = new Uint8ClampedArray(w * h * 4);
+      const src  = new Uint16Array(buf);
+      for (let i = 0, j = 0; i < w * h; i++, j += 4) {
+        const p   = src[i];
+        const r5  = (p >> 11) & 0x1f;
+        const g6  = (p >>  5) & 0x3f;
+        const b5  =  p        & 0x1f;
+        out[j + 0] = (r5 << 3) | (r5 >> 2);
+        out[j + 1] = (g6 << 2) | (g6 >> 4);
+        out[j + 2] = (b5 << 3) | (b5 >> 2);
+        out[j + 3] = 255;
+      }
+      return new ImageData(out, w, h);
+    }
+
+    // ---------------------------------------------------------------------------
+    // WebSocket connection
+    // ---------------------------------------------------------------------------
+    let header = null;  // parsed JSON from the first TEXT frame
+
+    const ws        = new WebSocket(wsUrl);
+    ws.binaryType   = 'arraybuffer';
+
+    ws.onopen = () => {
+      statusEl.textContent = 'connected';
+      statusEl.className   = 'connected';
+    };
+
+    ws.onclose = (ev) => {
+      statusEl.textContent = `closed (${ev.code})`;
+      statusEl.className   = 'error';
+    };
+
+    ws.onerror = () => {
+      statusEl.textContent = 'error';
+      statusEl.className   = 'error';
+    };
+
+    ws.onmessage = (ev) => {
+      // TEXT frame → JSON surface header
+      if (typeof ev.data === 'string') {
+        header = JSON.parse(ev.data);
+        canvas.width  = header.w;
+        canvas.height = header.h;
+        // Kick off the FPS counter reference time
+        frameCount = 0;
+        fpsRefTime = Date.now();
+        return;
+      }
+
+      // BINARY frame → pixel data
+      if (!header) return;  // header not yet received — skip
+
+      // Frame layout: [u32 LE seq][u32 LE size][pixels…]
+      const dv     = new DataView(ev.data);
+      // const seq = dv.getUint32(0, true);  // available for future use
+      // const size = dv.getUint32(4, true);
+      const pixels = ev.data.slice(8);
+
+      let imageData;
+      if (header.format === 'x8r8g8b8') {
+        imageData = decodeXRGB8888(pixels, header.w, header.h);
+      } else if (header.format === 'r5g6b5') {
+        imageData = decodeR5G6B5(pixels, header.w, header.h);
+      } else {
+        return;  // unknown format — skip
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      frameCount++;
+    };
+  </script>
+</body>
+</html>
