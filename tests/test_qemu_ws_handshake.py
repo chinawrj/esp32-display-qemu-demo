@@ -1,30 +1,28 @@
-"""NEXT-001 Day 4 — QEMU-native WebSocket listener handshake test.
+"""NEXT-001 Day 5 — QEMU-native WebSocket pixel fan-out tests.
 
-Verifies three things:
+Verifies four things:
 
 1. ``esp_rgb.c`` carries the ``ESP_RGB_WS_PATCH`` marker and the three
    hook-call sites inserted by Day 4.
 2. ``tools/build-qemu.sh`` installed ``esp_rgb_ws.{c,h}`` into the source
    tree.
 3. When booted with ``ESP_RGB_WS_PORT=9334``, the patched QEMU binary opens
-   a TCP listener on that port and completes an RFC 6455 WebSocket handshake
-   with a Python client.
+   a TCP listener, completes an RFC 6455 WebSocket handshake, and immediately
+   sends a JSON TEXT frame with surface metadata.
+4. At least one BINARY pixel frame (8-byte header + pixels) arrives within
+   5 s of connecting.
 
-Day 4 behaviour: QEMU closes the connection right after the handshake
-(pixel fan-out lands in Day 5). The test therefore only asserts that the
-upgrade succeeds — it does not expect any data frames.
-
-Skip conditions:
-  - ``tools/qemu-src/build/qemu-system-xtensa`` not present
-    (run ``bash tools/build-qemu.sh`` first).
-  - ``build/qemu_flash.bin`` or ``build/qemu_efuse.bin`` not present
-    (run ``idf.py build`` first).
+FB-010 fix (Day 5): the QEMU fixture now uses ``-serial null`` instead of
+``-serial mon:stdio``. The ``mon:stdio`` mux causes QEMU to absorb SIGTERM;
+with ``-serial null`` SIGTERM reliably terminates the process.
 """
 from __future__ import annotations
 
 import os
+import json
 import pathlib
 import socket
+import struct
 import subprocess
 import time
 
@@ -48,7 +46,9 @@ ESP_RGB_WS_H = (
 
 _WS_PORT = int(os.environ.get("ESP_RGB_WS_PORT", "9334"))
 _WS_HOST = "127.0.0.1"
-_BOOT_TIMEOUT_S = 15  # WS port should open within ~2s of QEMU init
+_BOOT_TIMEOUT_S = 15    # WS port opens within ~2 s of QEMU init
+_HEADER_TIMEOUT_S = 10  # JSON header arrives very soon after connect
+_FRAME_TIMEOUT_S = 60   # pixel frame requires firmware boot + LVGL init (~30 s)
 _RETRY_INTERVAL_S = 0.2
 
 
@@ -114,8 +114,14 @@ def qemu_ws_proc():
         "-global", "driver=nvram.esp32.efuse,property=drive,value=efuse",
         "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
         "-nic", "user,model=open_eth",
-        "-nographic",
-        "-serial", "mon:stdio",
+        # Use -display none instead of -nographic so that QEMU's display
+        # refresh loop (which drives rgb_update() / broadcast_frame()) keeps
+        # running. With -nographic the display subsystem is fully disabled
+        # and gfx_update() is never called.
+        "-display", "none",
+        # FB-010 fix: use -serial null (not mon:stdio) so SIGTERM is not
+        # absorbed by the QEMU monitor mux and reliably terminates QEMU.
+        "-serial", "null",
     ]
 
     proc = subprocess.Popen(
@@ -190,9 +196,9 @@ def test_esp_rgb_ws_source_files_installed():
 def test_ws_handshake(qemu_ws_proc):
     """Connecting to the QEMU WS listener must complete an RFC 6455 handshake.
 
-    Day 4: QEMU closes the channel right after the handshake callback fires
-    (no data frames yet). The test asserts *only* that the upgrade succeeds —
-    i.e. that ``connect()`` does not raise a handshake error.
+    Day 5: QEMU now sends a JSON header TEXT frame after the handshake then
+    continues pushing BINARY pixel frames. The test only asserts the upgrade
+    itself succeeds (the next two tests validate the data frames).
     """
     try:
         from websockets.sync.client import connect as ws_connect
@@ -205,21 +211,21 @@ def test_ws_handshake(qemu_ws_proc):
             f"ws://{_WS_HOST}:{_WS_PORT}/",
             open_timeout=5,
             close_timeout=3,
+            ping_interval=None,  # server does not handle PING/PONG yet (Day 5)
+            max_size=None,       # surface is ~1.92 MB, exceeds 1 MB default
         ) as ws:
             connected = True
-            # Day 4: QEMU closes right after handshake — we may receive a
-            # ConnectionClosed before any data. Either outcome is fine.
+            # Consume the JSON header so the connection is in a clean state.
             try:
-                ws.recv(timeout=2)
+                ws.recv(timeout=3)
             except Exception:
-                pass  # ConnectionClosed / timeout — expected in Day 4
+                pass
     except Exception as exc:
         if connected:
-            # Handshake succeeded; subsequent close raised — that's fine.
             pass
         else:
             pytest.fail(
-                f"WebSocket handshake failed (NEXT-001 Day 4): {exc!r}\n"
+                f"WebSocket handshake failed (NEXT-001 Day 5): {exc!r}\n"
                 f"  QEMU: {QEMU_BIN}\n"
                 f"  port: {_WS_HOST}:{_WS_PORT}"
             )
@@ -227,4 +233,103 @@ def test_ws_handshake(qemu_ws_proc):
     assert connected, (
         "WebSocket connect() context manager never entered — "
         "handshake did not succeed"
+    )
+
+
+def test_ws_json_header(qemu_ws_proc):
+    """First message after the WS handshake must be a JSON TEXT frame.
+
+    Asserts the envelope fields defined in docs/qemu-native-ws.md §1.2:
+    ``version``, ``w``, ``h``, ``format``, ``stride_bytes``, ``fps_target``.
+    """
+    try:
+        from websockets.sync.client import connect as ws_connect
+    except ImportError:
+        pytest.skip("websockets package not available; pip install websockets")
+
+    with ws_connect(
+        f"ws://{_WS_HOST}:{_WS_PORT}/",
+        open_timeout=5,
+        close_timeout=3,
+        ping_interval=None,  # server does not handle PING/PONG yet (Day 5)
+        max_size=None,       # surface is ~1.92 MB, exceeds 1 MB default
+    ) as ws:
+        msg = ws.recv(timeout=_HEADER_TIMEOUT_S)
+
+    assert isinstance(msg, str), (
+        f"Expected a TEXT frame for the JSON header; got {type(msg).__name__}"
+    )
+
+    header = json.loads(msg)
+    assert header.get("version") == 1, f"version != 1: {header}"
+    assert isinstance(header.get("w"), int) and header["w"] > 0, \
+        f"missing/invalid 'w': {header}"
+    assert isinstance(header.get("h"), int) and header["h"] > 0, \
+        f"missing/invalid 'h': {header}"
+    assert header.get("format") in ("x8r8g8b8", "r5g6b5"), \
+        f"unknown format: {header}"
+    assert isinstance(header.get("stride_bytes"), int) and \
+        header["stride_bytes"] > 0, f"missing/invalid 'stride_bytes': {header}"
+    assert isinstance(header.get("fps_target"), int) and \
+        header["fps_target"] > 0, f"missing/invalid 'fps_target': {header}"
+
+
+def test_ws_first_pixel_frame(qemu_ws_proc):
+    """After the JSON header, at least one BINARY pixel frame must arrive.
+
+    Frame format (docs/qemu-native-ws.md §1.3):
+      - bytes 0–3: u32 LE  seq  (0 for first frame)
+      - bytes 4–7: u32 LE  size (w × h × bytes_per_pixel)
+      - bytes 8…:  raw pixels in declared format
+
+    Validates that:
+      - The frame is a ``bytes`` object (BINARY WS opcode).
+      - It contains at least 8 bytes (header).
+      - ``seq == 0`` for the first frame.
+      - ``size > 0`` and ``size == w * h * bytes_per_pixel`` from header.
+      - Total message length == 8 + size.
+    """
+    try:
+        from websockets.sync.client import connect as ws_connect
+    except ImportError:
+        pytest.skip("websockets package not available; pip install websockets")
+
+    with ws_connect(
+        f"ws://{_WS_HOST}:{_WS_PORT}/",
+        open_timeout=5,
+        close_timeout=3,
+        ping_interval=None,  # server does not handle PING/PONG yet (Day 5)
+        max_size=None,       # surface is ~1.92 MB, exceeds 1 MB default
+    ) as ws:
+        # First message: JSON header (sent immediately on connect from cached header)
+        header_msg = ws.recv(timeout=_HEADER_TIMEOUT_S)
+        assert isinstance(header_msg, str), \
+            f"Expected JSON TEXT header; got {type(header_msg).__name__}"
+        header = json.loads(header_msg)
+
+        w            = header["w"]
+        h            = header["h"]
+        stride_bytes = header["stride_bytes"]
+        bpp          = stride_bytes // w  # bytes per pixel
+
+        # Second message: first pixel frame (allow up to _FRAME_TIMEOUT_S for
+        # firmware boot + LVGL to paint the first frame)
+        pixel_msg = ws.recv(timeout=_FRAME_TIMEOUT_S)
+
+    assert isinstance(pixel_msg, bytes), (
+        f"Expected a BINARY pixel frame; got {type(pixel_msg).__name__}"
+    )
+    assert len(pixel_msg) >= 8, (
+        f"Pixel frame too short ({len(pixel_msg)} bytes); expected ≥8"
+    )
+
+    seq, size = struct.unpack_from("<II", pixel_msg, 0)
+    assert seq == 0, f"First frame seq should be 0; got {seq}"
+
+    expected_size = w * h * bpp
+    assert size == expected_size, (
+        f"Frame size {size} != expected {expected_size} (w={w} h={h} bpp={bpp})"
+    )
+    assert len(pixel_msg) == 8 + size, (
+        f"Message length {len(pixel_msg)} != 8 + size ({8 + size})"
     )
