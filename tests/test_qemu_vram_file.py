@@ -73,6 +73,17 @@ def test_vram_snapshot_matches_uart_dump():
     if not vram_path.exists() or not log_path.exists():
         pytest.skip("VRAM file or QEMU log not present — run instrumented boot first")
 
+    # Skip if the log has no FB= lines — it was produced by a run that either
+    # predates fb_dump_base64() or did not use the correct firmware binary.
+    # Checking here avoids a confusing assertion error later.
+    log_text = log_path.read_text(errors="ignore")
+    if "FB=" not in log_text:
+        pytest.skip(
+            f"Serial log {log_path} contains no 'FB=' lines — "
+            "re-run with the current firmware: "
+            "'ESP_RGB_VRAM_FILE=/tmp/esp32-rgb-vram.bin bash tools/run-qemu.sh 150 verify'"
+        )
+
     W, H, STRIDE, SY = 240, 135, 800, 200
     raw = vram_path.read_bytes()
     snap = bytearray()

@@ -130,7 +130,25 @@ bash tools/start-demo.sh                 # full: build + boot + verify
 bash tools/start-demo.sh quick           # skip build
 ```
 
-### Live Chrome viewer (one command)
+### QEMU-native WebSocket viewer (recommended, no host bridge needed)
+
+`tools/run-direct-demo.sh` boots the patched QEMU binary whose built-in
+`esp_rgb` device streams frames **directly** over a WebSocket — no host-side
+fb_server or shared memory file required:
+
+```bash
+bash tools/run-direct-demo.sh            # start QEMU + open browser automatically
+bash tools/run-direct-demo.sh --no-browser  # just print the URL, Ctrl-C to stop
+bash tools/run-direct-demo.sh --port 9335   # override WS port (default: 9334)
+```
+
+Open `http://127.0.0.1:8090/qemu-direct.html?port=9334` in Chrome. LVGL
+content appears ~3 s after boot; after the benchmark finishes the firmware
+loops an animated RGB565 gradient (~30 fps).
+
+The acceptance test for this path: `pytest tests/cdp/test_qemu_direct_canvas.py`.
+
+### Live Chrome viewer (legacy, file-mmap bridge)
 
 `tools/run-demo.sh` boots QEMU with the `esp_rgb` VRAM mmap'd to a host file,
 starts the fb_server in `raw-vram` mode, and (interactively) opens the canvas

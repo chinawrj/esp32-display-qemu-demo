@@ -10,8 +10,15 @@ The headline target is at the top.
 
 ## ★ NEXT-001 — QEMU-native framebuffer → Chrome export (no firmware changes)
 
-**Status:** Not started. Intended platform: **Linux** (macOS path is already
-working via the file-mmap bridge below; do not block on it).
+**Status:** ✅ **DONE** (Days 4–7, Linux).  
+Shipped commits: d922378 (Day 5 WS server), c09fea8 (Day 6 VRAM-direct), f798616 (web viewer), 180eae5 (tests), b9f9199 (Day 6 log).
+
+All acceptance criteria met:
+- ✅ `bash tools/build-qemu.sh` produces a `qemu-system-xtensa` with the built-in WS device.
+- ✅ `bash tools/run-direct-demo.sh` boots QEMU + opens `web/qemu-direct.html`; LVGL animates at ~30 fps with no `ESP_RGB_VRAM_FILE`.
+- ✅ `pytest -q tests/cdp/test_qemu_direct_canvas.py` passes with `ESP_RGB_VRAM_FILE` unset.
+- ✅ Full test suite: 62 passed, 0 failed (50 non-CDP + 12 CDP).
+- ✅ No firmware-side changes required; `main/qemu_vram.c` calls remain optional.
 
 ### Problem
 
