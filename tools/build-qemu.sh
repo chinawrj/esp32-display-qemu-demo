@@ -197,6 +197,49 @@ p.write_text(src)
 PY
 fi
 
+# ESP_RGB_WS_PATCH_V2: add unconditional (throttled) broadcast_frame() at the
+# end of rgb_update() so clients receive frames even when the firmware writes
+# directly to VRAM without triggering the MMIO update path.
+# The call inside the existing update_area block stays for the MMIO path.
+if [ -f "$SRC_DIR/hw/display/esp_rgb.c" ] && \
+   grep -q "ESP_RGB_WS_PATCH" "$SRC_DIR/hw/display/esp_rgb.c" && \
+   ! grep -q "ESP_RGB_WS_PATCH_V2" "$SRC_DIR/hw/display/esp_rgb.c"; then
+  echo "[build-qemu] patching esp_rgb.c: ESP_RGB_WS_PATCH_V2 unconditional broadcast"
+  python3 - <<'PY'
+import pathlib
+p = pathlib.Path("hw/display/esp_rgb.c")
+src = p.read_text()
+
+# Insert an unconditional, throttled broadcast_frame() at the END of
+# rgb_update() — after the closing brace of the if (s->update_area) block.
+# The anchor is unique: the comment that follows the update_area block.
+src = src.replace(
+    '        /* Automatically clear the update flag, the guest can re-use the given color_content buffer.\n'
+    '         * It must set it again to trigger another update. */\n'
+    '        s->update_area = false;\n'
+    '    }\n'
+    '}\n'
+    '\n'
+    '\n'
+    'static void rgb_invalidate',
+    '        /* Automatically clear the update flag, the guest can re-use the given color_content buffer.\n'
+    '         * It must set it again to trigger another update. */\n'
+    '        s->update_area = false;\n'
+    '    }\n'
+    '    /* ESP_RGB_WS_PATCH_V2: unconditional throttled broadcast so VRAM-direct\n'
+    '     * firmware (qemu_vram_mirror path) also streams frames to WS clients. */\n'
+    '    esp_rgb_ws_broadcast_frame(s);\n'
+    '}\n'
+    '\n'
+    '\n'
+    'static void rgb_invalidate',
+    1,
+)
+
+p.write_text(src)
+PY
+fi
+
 # Only init submodules required for xtensa-softmmu. Skipping the giant
 # edk2/SeaBIOS/etc. roms saves >2 GB and many minutes of cloning.
 SUBMODULES_NEEDED=(

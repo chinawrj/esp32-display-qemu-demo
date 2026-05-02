@@ -13,9 +13,9 @@
  * or when the listener failed to bind. Default port is 9334; override
  * with ESP_RGB_WS_PORT.
  *
- * v1 (Day 4): listener + RFC 6455 handshake only. announce_/broadcast_
- * are stubs that log "would-emit" once and return. Pixel fan-out
- * lands in Day 5.
+ * v1 (Day 5): listener + RFC 6455 handshake + pixel fan-out.
+ * announce_surface broadcasts a JSON TEXT frame; broadcast_frame sends
+ * BINARY frames with an 8-byte header [u32 LE seq][u32 LE size].
  *
  * Marker comment: ESP_RGB_WS_PATCH (so tools/build-qemu.sh can detect
  * idempotency).
