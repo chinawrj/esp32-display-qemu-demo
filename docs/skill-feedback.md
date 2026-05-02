@@ -87,3 +87,11 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: The `qemu_ws_proc` fixture in `tests/test_qemu_ws_handshake.py` launches QEMU with `-serial mon:stdio` (required so the QEMU monitor is connected and the guest serial output flows through stdio). QEMU's built-in monitor absorbs SIGTERM, so `proc.terminate()` + `proc.wait(timeout=5)` leaves QEMU running. Post-test `ps aux | grep qemu-system-xtensa` revealed the orphan. SIGKILL in the `except TimeoutExpired` branch fires correctly, but only after 5 s delay. Using `-serial null` instead of `-serial mon:stdio` for WS-only tests would avoid the issue, since the test doesn't need the UART serial output.
 - **Workaround**: Preemptively `pkill -f qemu-system-xtensa` before each full suite run. Day 5 fix: change the fixture to pass `-serial null` (or `/dev/null`) instead of `mon:stdio`; this removes the monitor mux and allows SIGTERM to land on the QEMU main loop directly.
 - **Priority**: medium
+
+### FB-011 (2026-05-02)
+- **Skill**: automated-testing / websockets client configuration
+- **Category**: bug
+- **Summary**: Python `websockets` default `max_size=1_048_576` (1 MB) silently rejects frames larger than 1 MB with a `1009 message too big` close frame.
+- **Detail**: Day 5 `test_ws_first_pixel_frame` kept timing out. QEMU logs showed `broadcast_frame()` successfully sending seq=0..20 frames (500ms apart), but Python closed the connection with status 1009 before reading the first frame. The QEMU `esp_rgb` default surface is 800×600×4 = 1,920,000 bytes; the WS frame payload is 1,920,008 bytes — 83% above the `websockets` default 1 MB limit. The root cause was invisible from the server side: QEMU's `write_all` succeeded (TCP buffer accepted the data), but Python's library sent a `1009` close frame immediately on receipt. The test saw a `ConnectionClosedError` at `recv()` rather than a timeout-style error, which was misleading.
+- **Workaround**: Add `max_size=None` to all `ws_connect()` / `websockets.connect()` calls whenever the server may send frames > 1 MB. For production use, set `max_size` to a calculated upper bound (`w * h * bpp + 16`) rather than `None`.
+- **Priority**: medium
