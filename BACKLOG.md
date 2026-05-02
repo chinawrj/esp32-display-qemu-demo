@@ -155,6 +155,189 @@ follow-up if anyone wants it.
 
 ---
 
+## NEXT-002 — QEMU Wi-Fi STA 支持（wpa_supplicant ctrl socket 桥接）
+
+**Status:** Not started. Intended platform: **Linux**.
+
+### Problem
+
+ESP-IDF 官方的 Wi-Fi 示例（`examples/wifi/getting_started/station`、
+`examples/wifi/scan` 等）在当前 QEMU 中**无法运行**：QEMU 的
+`esp32` machine 没有任何 Wi-Fi 设备，`esp_wifi_init()` 会直接
+panic 或返回 `ESP_ERR_NOT_SUPPORTED`。要让开发者在 QEMU 里验证
+Wi-Fi 逻辑，必须在两个层面同时实现：
+
+1. **QEMU 层**：新增一个虚拟 Wi-Fi 设备，该设备通过
+   **wpa_supplicant ctrl socket**（`/var/run/wpa_supplicant/wlanX` 或
+   用户指定路径）连接到宿主机上已运行的 wpa_supplicant，代为完成
+   真实的 802.11 关联；
+2. **ESP-IDF 层**：实现一套与该虚拟设备通信的"伪 Wi-Fi 驱动"，向
+   应用层暴露与 ESP32-C3/C6 **完全相同**的公开 API 和事件系统，
+   使任何按官方文档编写的 Wi-Fi 示例无需修改即可在 QEMU 中运行。
+
+### 目标用户体验
+
+```c
+// 这段代码在真实 ESP32-C3/C6 上能跑，在 QEMU 里也应该能跑，不改一行：
+esp_netif_create_default_wifi_sta();
+wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+esp_wifi_init(&cfg);
+esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL);
+esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL);
+esp_wifi_set_mode(WIFI_MODE_STA);
+esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+esp_wifi_start();
+// → 期望：收到 WIFI_EVENT_STA_START → WIFI_EVENT_STA_CONNECTED
+//         → IP_EVENT_STA_GOT_IP，s_ip_addr 已填入宿主机分配的 IP
+```
+
+API 兼容性覆盖范围（STA 阶段最低要求）：
+
+| API / 事件 | 说明 |
+|---|---|
+| `esp_wifi_init / deinit` | 初始化与资源释放 |
+| `esp_wifi_set_mode(WIFI_MODE_STA)` | 切换 STA 模式 |
+| `esp_wifi_set_config(WIFI_IF_STA, …)` | 写入 SSID / password |
+| `esp_wifi_start / stop` | 启动/停止 Wi-Fi 子系统 |
+| `esp_wifi_connect / disconnect` | 触发关联 / 断联 |
+| `esp_wifi_scan_start / get_ap_records` | 扫描 AP 列表 |
+| `esp_wifi_get_mac` | 读取 MAC（取宿主机 wlan MAC） |
+| `WIFI_EVENT_STA_START/STOP` | 状态事件 |
+| `WIFI_EVENT_STA_CONNECTED/DISCONNECTED` | 关联事件 |
+| `IP_EVENT_STA_GOT_IP` | DHCP 获得 IP 事件 |
+
+### 技术路线
+
+> 以下描述两个必须实现的层次及其职责边界。**固件与 QEMU 设备之间的具体通信机制**（寄存器布局、中断方案、消息格式等）由实施者在详细设计阶段确定，不在本 item 中预先锁定。
+
+#### 1. QEMU 虚拟 Wi-Fi 设备（`esp_wifi` device）
+
+```
+  ESP-IDF firmware
+       │  （固件-设备通信接口，具体机制由实施者确定）
+       ▼
+  QEMU esp_wifi device
+       │  Unix domain socket
+       ▼
+  宿主机 wpa_supplicant
+  （通过 ctrl_iface 发 ATTACH / SCAN / ADD_NETWORK /
+    SELECT_NETWORK / STATUS / DISCONNECT 等命令）
+       │
+       ▼
+  宿主机真实 Wi-Fi NIC  ←→  AP
+```
+
+- 挂到 esp32 machine，注册为可寻址的虚拟设备。
+- 设备内部维护状态机：`IDLE → SCANNING → ASSOCIATING →
+  CONNECTED → DISCONNECTED`，状态变化时通知固件侧驱动，
+  驱动再分发对应 ESP-IDF 事件。
+- wpa_supplicant ctrl socket 通信必须是异步非阻塞的，不能阻塞 vCPU 线程。
+- 设备参数通过命令行选项或环境变量传入 wpa_supplicant ctrl socket 路径。
+- DHCP：关联成功后，从 wpa_supplicant `STATUS` 或宿主机网络接口获取
+  已分配 IP，传递给驱动构造 `ip_event_got_ip_t` 事件上报。
+  （v1 不需要在 QEMU 内部运行完整 DHCP 协议栈。）
+
+#### 2. ESP-IDF 虚拟 Wi-Fi 驱动（component）
+
+- 以 ESP-IDF component 形式实现，通过 `sdkconfig` 选项
+  `CONFIG_ESP_WIFI_QEMU=y` 替换官方驱动，真实硬件编译时不引入任何代码。
+- 必须实现全部公开 `esp_wifi_*` API（STA 模式所需子集），
+  使应用层代码无需区分运行环境。
+- 事件上报：向 `esp_event_loop` post `WIFI_EVENT_*` / `IP_EVENT_*`，
+  事件类型和参数结构体与官方驱动完全一致。
+- 创建 `esp_netif` 实例并绑定虚拟驱动，使 `esp_netif_get_ip_info()`
+  等接口返回正确结果。
+
+### Concrete subtasks（in order）
+
+1. **设计固件-设备通信协议**（spec 文档）
+   - 确定固件与 QEMU 虚拟设备之间的通信机制（形式不限）；
+   - 定义命令/响应/异步事件的报文格式，覆盖 SCAN、
+     CONNECT、DISCONNECT、GET_MAC 及对应的响应/异步事件；
+   - 确定 IP 信息（地址/掩码/网关）的传递方式。
+
+2. **实现 QEMU `esp_wifi` device**
+   - 注册到 esp32 machine；
+   - wpa_supplicant ctrl socket 异步 I/O；
+   - 状态机 + 固件通知机制；
+   - 构建系统条目（meson.build 或等效）。
+
+3. **实现 ESP-IDF component `esp_wifi_qemu`**
+   - 完整的 `esp_wifi_*` API 实现（仅 STA 模式所需子集）；
+   - 事件上报：`WIFI_EVENT_*` / `IP_EVENT_*`，与官方驱动一致；
+   - `esp_netif` 绑定，`IP_EVENT_STA_GOT_IP` 事件中携带正确 IP；
+   - `sdkconfig` 选项 `CONFIG_ESP_WIFI_QEMU`，由 `sdkconfig.defaults`
+     在 QEMU target 下自动启用。
+
+4. **验证：跑通官方 station 示例**
+   - 将 `examples/wifi/getting_started/station` 的 `app_main.c`
+     复制进本仓库的 `examples/wifi_sta/`（不修改业务代码）；
+   - 在 QEMU 中启动，观察串口输出：
+     ```
+     I (xxx) wifi_sta: connected to ap SSID:MyAP password:MyPass
+     I (xxx) wifi_sta: got ip:192.168.x.x
+     ```
+
+5. **自动化测试**
+   - `tests/test_qemu_wifi_sta.py`：启动 QEMU（带 `esp_wifi` 设备），
+     捕获串口输出，断言 `got ip:` 行出现（timeout 30 s）；
+   - 需要宿主机有可用 Wi-Fi 接口 + wpa_supplicant，否则 skip。
+
+6. **文档**
+   - `docs/qemu-wifi.md`：架构图、wpa_supplicant 配置步骤、
+     `sdkconfig` 开关说明、已知限制（AP 模式、WPA3 等留待后续）。
+
+### Files this work will touch / create
+
+| Area | Path |
+|---|---|
+| QEMU 设备实现 | `tools/qemu-src/hw/net/esp_wifi.c` (new) |
+| QEMU 设备头文件 | `tools/qemu-src/include/hw/net/esp_wifi.h` (new) |
+| QEMU machine 注册 | `tools/qemu-src/hw/xtensa/esp32.c` |
+| QEMU meson 构建 | `tools/qemu-src/hw/net/meson.build` |
+| ESP-IDF component | `components/esp_wifi_qemu/` (new) |
+| sdkconfig 默认值 | `sdkconfig.defaults` (add `CONFIG_ESP_WIFI_QEMU=y`) |
+| 示例代码 | `examples/wifi_sta/main/app_main.c` (copy from ESP-IDF) |
+| 自动化测试 | `tests/test_qemu_wifi_sta.py` (new) |
+| 文档 | `docs/qemu-wifi.md` (new) |
+| QEMU 编译脚本 | `tools/build-qemu.sh` (add net/esp_wifi.c) |
+
+### Acceptance criteria
+
+- [ ] `bash tools/build-qemu.sh` 产出包含 `esp_wifi` 设备的
+      `qemu-system-xtensa`，无编译错误。
+- [ ] 官方 `examples/wifi/getting_started/station` 的 `app_main.c`
+      **不修改一行**，通过 `sdkconfig` 切换驱动后在 QEMU 中能
+      成功启动并打印 `got ip:`。
+- [ ] `pytest -q tests/test_qemu_wifi_sta.py` 在有 wpa_supplicant
+      可用的 Linux CI 环境中通过。
+- [ ] 现有 `pytest -q` 套件（50 passed, 2 skipped）无回归。
+- [ ] 真实 ESP32-C3/C6 编译时，`CONFIG_ESP_WIFI_QEMU` 未启用，
+      不引入任何额外代码或依赖。
+
+### Known limitations（v1 scope）
+
+- **仅 STA 模式**；AP / SoftAP、Wi-Fi Direct 留待后续 item。
+- **WPA2-Personal 只**；WPA3、EAP 企业级认证暂不支持。
+- **不在 QEMU 内部运行 TCP/IP 栈**；IP 由宿主机 DHCP 分配后直接
+  透传，`lwIP` 数据面可选——v1 仅验证事件与 IP 获取，不强制要求
+  应用层 TCP/UDP 数据通路可用。
+- macOS 暂不支持（wpa_supplicant ctrl socket 路径差异大）。
+
+### Prior art / references
+
+- [esp-hosted-ng](https://github.com/espressif/esp-hosted-ng) —
+  包含一套 ESP-IDF 侧 `esp_wifi` API shim 实现，可作为可选参考
+  （用户原话：「也许 esp-hosted 的某个项目的接口是个可能的参考源头」）
+- QEMU `hw/net/virtio-net.c`，`hw/net/e1000.c` — QEMU 网卡设备实现范式
+- `tools/qemu-src/hw/display/esp_rgb.c` — 本项目已有的自定义设备，
+  设备注册与通知机制可参考
+- wpa_supplicant ctrl_iface 文档：`wpa_supplicant/ctrl_iface.c` +
+  `wpa_supplicant/wpa_cli.c`（ATTACH / SCAN / ADD_NETWORK / STATUS
+  命令格式）
+
+---
+
 ## Other backlog items (lower priority)
 
 (none yet — add new entries above this line)
