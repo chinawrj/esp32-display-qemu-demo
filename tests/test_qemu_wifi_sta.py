@@ -69,14 +69,20 @@ def _has_wpa_cli() -> bool:
 
 
 def _qemu_has_wifi_device() -> bool:
-    """True if the QEMU binary was built with the esp_wifi device."""
+    """True if the QEMU binary was built with the esp_wifi device.
+
+    SysBusDevices instantiated as machine children don't appear in
+    '-device help'. We check the binary's string table for the QEMU
+    type name 'net.esp.wifi' which is unconditionally embedded when
+    the device is compiled in.
+    """
     if not _has_qemu():
         return False
     result = subprocess.run(
-        [str(QEMU_BIN), "-device", "help"],
-        capture_output=True, text=True, timeout=5,
+        ["strings", str(QEMU_BIN)],
+        capture_output=True, text=True, timeout=10,
     )
-    return "esp_wifi" in result.stdout or "esp_wifi" in result.stderr
+    return "net.esp.wifi" in result.stdout
 
 
 # Shared skip condition for all integration tests
@@ -100,15 +106,8 @@ _REASON_NO_WIFI_DEV = (
 class TestSourceFiles:
     """Verify that required source files exist (Day 8 scaffold checks)."""
 
-    @pytest.mark.xfail(
-        reason="Day 9 task: esp_wifi.c QEMU device not yet implemented",
-        strict=False,
-    )
     def test_qemu_wifi_patch_file_exists(self):
-        """esp_wifi.c patch file must be present in qemu-src-patches.
-
-        Expected to fail until Day 9 when the QEMU device skeleton is created.
-        """
+        """esp_wifi.c patch file must be present in qemu-src-patches."""
         patch_path = (
             PROJECT_ROOT
             / "tools"
@@ -120,6 +119,32 @@ class TestSourceFiles:
         assert patch_path.is_file(), (
             f"Missing QEMU device patch: {patch_path}. "
             "Create tools/qemu-src-patches/hw/net/esp_wifi.c (Day 9 task)."
+        )
+
+    def test_qemu_wifi_header_exists(self):
+        """esp_wifi.h patch header must be present in qemu-src-patches."""
+        header_path = (
+            PROJECT_ROOT
+            / "tools"
+            / "qemu-src-patches"
+            / "include"
+            / "hw"
+            / "net"
+            / "esp_wifi.h"
+        )
+        assert header_path.is_file(), f"Missing QEMU device header: {header_path}"
+
+    def test_qemu_binary_contains_wifi_type(self):
+        """QEMU binary must contain the 'net.esp.wifi' type string."""
+        if not _has_qemu():
+            pytest.skip(_REASON_NO_QEMU)
+        result = subprocess.run(
+            ["strings", str(QEMU_BIN)],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert "net.esp.wifi" in result.stdout, (
+            "QEMU binary does not contain 'net.esp.wifi'. "
+            "Run: bash tools/build-qemu.sh"
         )
 
     def test_component_cmake_exists(self):
@@ -179,14 +204,18 @@ class TestQemuWifiDevice:
 
     @pytest.mark.skipif(not _qemu_has_wifi_device(), reason=_REASON_NO_WIFI_DEV)
     def test_qemu_enumerates_wifi_device(self):
-        """QEMU should list 'esp_wifi' in its device catalogue."""
+        """QEMU binary string table must contain 'net.esp.wifi' type name.
+
+        SysBusDevices instantiated as machine children are not listed in
+        '-device help'; we use 'strings' to verify the type is compiled in.
+        """
         result = subprocess.run(
-            [str(QEMU_BIN), "-device", "help"],
-            capture_output=True, text=True, timeout=5,
+            ["strings", str(QEMU_BIN)],
+            capture_output=True, text=True, timeout=10,
         )
-        combined = result.stdout + result.stderr
-        assert "esp_wifi" in combined, (
-            f"esp_wifi device not found in QEMU device list. Output:\n{combined[:500]}"
+        assert "net.esp.wifi" in result.stdout, (
+            "esp_wifi device type 'net.esp.wifi' not found in QEMU binary. "
+            f"Run bash tools/build-qemu.sh. Binary: {QEMU_BIN}"
         )
 
     @pytest.mark.skipif(not _has_wpa_supplicant_ctrl(), reason=_REASON_NO_CTRL)

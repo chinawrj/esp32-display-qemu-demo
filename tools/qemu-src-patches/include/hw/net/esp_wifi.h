@@ -1,0 +1,127 @@
+#pragma once
+/*
+ * ESP32 Virtual Wi-Fi device — QEMU hardware model
+ *
+ * Implements a virtual Wi-Fi STA peripheral at DR_REG_WDEV_BASE (0x3ff75000).
+ * The device bridges to the host wpa_supplicant daemon via its Unix-domain
+ * ctrl socket.  Protocol spec: docs/qemu-wifi.md.
+ *
+ * Copyright (c) 2026 esp32-display-qemu-demo contributors.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+#include "hw/sysbus.h"
+#include "hw/hw.h"
+#include "qemu/osdep.h"
+
+/* ---------- QEMU type plumbing -------------------------------------------- */
+#define TYPE_ESP_WIFI   "net.esp.wifi"
+#define ESP_WIFI(obj)            OBJECT_CHECK(ESPWifiState, (obj), TYPE_ESP_WIFI)
+#define ESP_WIFI_GET_CLASS(obj)  OBJECT_GET_CLASS(ESPWifiState, obj, TYPE_ESP_WIFI)
+#define ESP_WIFI_CLASS(klass)    OBJECT_CLASS_CHECK(ESPWifiState, klass, TYPE_ESP_WIFI)
+
+/* ---------- Device/protocol version --------------------------------------- */
+#define ESP_WIFI_VERSION_MAJOR  1
+#define ESP_WIFI_VERSION_MINOR  0
+
+/* ---------- MMIO size ----------------------------------------------------- */
+#define ESP_WIFI_IO_SIZE        0x120   /* covers all registers in the spec */
+
+/* ---------- Register offsets (must match docs/qemu-wifi.md §2) ------------ */
+#define WIFI_REG_VER            0x000
+#define WIFI_REG_CMD            0x004
+#define WIFI_REG_STATUS         0x008
+#define WIFI_REG_EVENT          0x00c
+#define WIFI_REG_IRQ_ENABLE     0x010
+#define WIFI_REG_SSID_LEN       0x014
+#define WIFI_REG_SSID_BASE      0x018   /* 32 bytes, 8 regs  */
+#define WIFI_REG_PASS_LEN       0x038
+#define WIFI_REG_PASS_BASE      0x03c   /* 64 bytes, 16 regs */
+#define WIFI_REG_MAC0           0x080
+#define WIFI_REG_MAC1           0x084
+#define WIFI_REG_IP_ADDR        0x088
+#define WIFI_REG_IP_MASK        0x08c
+#define WIFI_REG_IP_GW          0x090
+#define WIFI_REG_SCAN_COUNT     0x094
+#define WIFI_REG_SCAN_IDX       0x098
+#define WIFI_REG_SCAN_RSSI      0x09c
+#define WIFI_REG_SCAN_SSID_LEN  0x0a0
+#define WIFI_REG_SCAN_SSID_BASE 0x0a4   /* 32 bytes, 8 regs  */
+#define WIFI_REG_SCAN_BSSID0    0x0c4
+#define WIFI_REG_SCAN_BSSID1    0x0c8
+#define WIFI_REG_CTRL_SOCK_LEN  0x0d0
+#define WIFI_REG_CTRL_SOCK_BASE 0x0d4   /* 64 bytes, 16 regs */
+
+/* ---------- Command codes (write to WIFI_REG_CMD) ------------------------- */
+#define WIFI_CMD_INIT           0x01
+#define WIFI_CMD_DEINIT         0x02
+#define WIFI_CMD_SET_MODE_STA   0x03
+#define WIFI_CMD_START          0x04
+#define WIFI_CMD_STOP           0x05
+#define WIFI_CMD_CONNECT        0x06
+#define WIFI_CMD_DISCONNECT     0x07
+#define WIFI_CMD_SCAN           0x08
+#define WIFI_CMD_GET_MAC        0x09
+
+/* ---------- Event codes (WIFI_REG_EVENT) ---------------------------------- */
+#define WIFI_EVT_NONE           0x00
+#define WIFI_EVT_INIT_DONE      0x01
+#define WIFI_EVT_INIT_FAIL      0x02
+#define WIFI_EVT_START_DONE     0x03
+#define WIFI_EVT_STOP_DONE      0x04
+#define WIFI_EVT_CONNECTED      0x05
+#define WIFI_EVT_DISCONNECTED   0x06
+#define WIFI_EVT_GOT_IP         0x07
+#define WIFI_EVT_SCAN_DONE      0x08
+#define WIFI_EVT_ERROR          0x09
+
+/* ---------- State codes (WIFI_REG_STATUS) --------------------------------- */
+#define WIFI_STATE_UNINIT       0x00
+#define WIFI_STATE_IDLE         0x01
+#define WIFI_STATE_STARTED      0x02
+#define WIFI_STATE_CONNECTING   0x03
+#define WIFI_STATE_CONNECTED    0x04
+#define WIFI_STATE_ERROR        0x10
+
+/* ---------- Device state -------------------------------------------------- */
+
+/* Max scan results cached in device */
+#define ESP_WIFI_MAX_SCAN_RESULTS   16
+
+typedef struct ESPWifiScanResult {
+    uint8_t  bssid[6];
+    uint8_t  ssid[32];
+    uint8_t  ssid_len;
+    int8_t   rssi;
+} ESPWifiScanResult;
+
+typedef struct ESPWifiState {
+    SysBusDevice parent_obj;
+
+    MemoryRegion iomem;
+    qemu_irq     irq;           /**< IRQ line 0 → ETS_WIFI_MAC_INTR_SOURCE */
+
+    /* --- Registers visible to firmware --- */
+    uint32_t status;            /**< WIFI_STATE_* */
+    uint32_t event;             /**< WIFI_EVT_* pending (0 = none) */
+    uint32_t irq_enable;        /**< Event bitmask that asserts IRQ */
+    uint8_t  ssid[32];
+    uint8_t  ssid_len;
+    uint8_t  pass[64];
+    uint8_t  pass_len;
+    uint8_t  mac[6];
+    uint32_t ip_addr;
+    uint32_t ip_mask;
+    uint32_t ip_gw;
+    char     ctrl_sock_path[64];
+    uint8_t  ctrl_sock_path_len;
+
+    /* --- Scan results --- */
+    uint32_t            scan_count;
+    uint32_t            scan_idx;
+    ESPWifiScanResult   scan_results[ESP_WIFI_MAX_SCAN_RESULTS];
+
+    /* --- wpa_supplicant async I/O (Day 10+) --- */
+    /* GIOChannel *ctrl_chan;  <-- to be added */
+    /* guint       ctrl_watch; <-- to be added */
+} ESPWifiState;

@@ -240,6 +240,103 @@ p.write_text(src)
 PY
 fi
 
+# ESP_WIFI_PATCH (NEXT-002): install esp_wifi.{c,h} from qemu-src-patches,
+# register the device in hw/net/meson.build, and wire it into esp32.h / esp32.c.
+# Marker: ESP_WIFI_PATCH
+if [ -d "$PATCH_ROOT" ] && \
+   [ -f "$PATCH_ROOT/hw/net/esp_wifi.c" ] && \
+   [ -f "$PATCH_ROOT/include/hw/net/esp_wifi.h" ]; then
+
+  echo "[build-qemu] installing ESP_WIFI_PATCH source files"
+  install -d "$SRC_DIR/hw/net"
+  install -d "$SRC_DIR/include/hw/net"
+  install -m 0644 "$PATCH_ROOT/hw/net/esp_wifi.c" \
+    "$SRC_DIR/hw/net/esp_wifi.c"
+  install -m 0644 "$PATCH_ROOT/include/hw/net/esp_wifi.h" \
+    "$SRC_DIR/include/hw/net/esp_wifi.h"
+
+  # Register esp_wifi.c in hw/net/meson.build (unconditional build)
+  if ! grep -q "esp_wifi.c" "$SRC_DIR/hw/net/meson.build"; then
+    echo "[build-qemu] patching hw/net/meson.build: register esp_wifi.c"
+    echo "" >> "$SRC_DIR/hw/net/meson.build"
+    echo "# ESP_WIFI_PATCH (NEXT-002): virtual Wi-Fi STA device" >> "$SRC_DIR/hw/net/meson.build"
+    echo "system_ss.add(files('esp_wifi.c'))" >> "$SRC_DIR/hw/net/meson.build"
+  fi
+
+  # Patch include/hw/xtensa/esp32.h: add ESPWifiState field to Esp32SocState
+  if ! grep -q "ESP_WIFI_PATCH" "$SRC_DIR/include/hw/xtensa/esp32.h"; then
+    echo "[build-qemu] patching include/hw/xtensa/esp32.h: add ESPWifiState wifi"
+    python3 - "$SRC_DIR/include/hw/xtensa/esp32.h" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+src = src.replace(
+    '#include "hw/display/esp_rgb.h"',
+    '#include "hw/display/esp_rgb.h"\n'
+    '#include "hw/net/esp_wifi.h"  /* ESP_WIFI_PATCH (NEXT-002) */',
+    1,
+)
+src = src.replace(
+    '    ESPRgbState rgb;',
+    '    ESPRgbState rgb;\n'
+    '    ESPWifiState wifi;  /* ESP_WIFI_PATCH (NEXT-002) */',
+    1,
+)
+p.write_text(src)
+PY
+  fi
+
+  # Patch hw/xtensa/esp32.c: include header + object_initialize_child + realize + reset
+  if ! grep -q "ESP_WIFI_PATCH" "$SRC_DIR/hw/xtensa/esp32.c"; then
+    echo "[build-qemu] patching hw/xtensa/esp32.c: wire in esp_wifi device"
+    python3 - "$SRC_DIR/hw/xtensa/esp32.c" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+
+# 1. Add #include after esp32.h include
+src = src.replace(
+    '#include "hw/xtensa/esp32.h"',
+    '#include "hw/xtensa/esp32.h"\n'
+    '#include "hw/misc/esp32_reg.h"  /* ESP_WIFI_PATCH: ETS_WIFI_MAC_INTR_SOURCE */\n'
+    '/* ESP_WIFI_PATCH (NEXT-002): virtual Wi-Fi device already in esp32.h */',
+    1,
+)
+
+# 2. Add object_initialize_child after rgb init
+src = src.replace(
+    '    object_initialize_child(obj, "rgb", &s->rgb, TYPE_ESP_RGB);',
+    '    object_initialize_child(obj, "rgb", &s->rgb, TYPE_ESP_RGB);\n\n'
+    '    /* ESP_WIFI_PATCH (NEXT-002): virtual Wi-Fi STA device */\n'
+    '    object_initialize_child(obj, "wifi", &s->wifi, TYPE_ESP_WIFI);',
+    1,
+)
+
+# 3. Add realize + IRQ connect after rgb periph registration
+src = src.replace(
+    '    esp32_soc_add_periph_device(sys_mem, &s->rgb, DR_REG_FRAMEBUF_BASE);',
+    '    esp32_soc_add_periph_device(sys_mem, &s->rgb, DR_REG_FRAMEBUF_BASE);\n\n'
+    '    /* ESP_WIFI_PATCH (NEXT-002): realize and map virtual Wi-Fi device */\n'
+    '    qdev_realize(DEVICE(&s->wifi), &s->periph_bus, &error_fatal);\n'
+    '    esp32_soc_add_periph_device(sys_mem, &s->wifi, DR_REG_WDEV_BASE);\n'
+    '    sysbus_connect_irq(SYS_BUS_DEVICE(&s->wifi), 0,\n'
+    '                       qdev_get_gpio_in(intmatrix_dev, ETS_WIFI_MAC_INTR_SOURCE));',
+    1,
+)
+
+# 4. Add device_cold_reset alongside rgb reset
+src = src.replace(
+    '        device_cold_reset(DEVICE(&s->rgb));',
+    '        device_cold_reset(DEVICE(&s->rgb));\n'
+    '        device_cold_reset(DEVICE(&s->wifi));  /* ESP_WIFI_PATCH */',
+    1,
+)
+
+p.write_text(src)
+PY
+  fi
+fi
+
 # Only init submodules required for xtensa-softmmu. Skipping the giant
 # edk2/SeaBIOS/etc. roms saves >2 GB and many minutes of cloning.
 SUBMODULES_NEEDED=(
