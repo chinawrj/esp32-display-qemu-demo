@@ -333,3 +333,119 @@ def test_ws_first_pixel_frame(qemu_ws_proc):
     assert len(pixel_msg) == 8 + size, (
         f"Message length {len(pixel_msg)} != 8 + size ({8 + size})"
     )
+
+
+def test_ws_frame_looks_like_lvgl(qemu_ws_proc):
+    """Decode the first pixel frame with Pillow; assert non-trivial colour variance.
+
+    Validates that the QEMU surface contains real rendered content (not a blank
+    black or solid-colour surface).  Saves the decoded frame to
+    ``artifacts/qemu-ws-frame-001.png`` for visual inspection.
+
+    Acceptance thresholds (conservative — matches test_live_qemu_canvas.py):
+    - ``unique_colours >= 8``   at least 8 distinct RGB triples in the frame
+    - ``pixel_sum > 0``         at least one non-black pixel
+
+    The test is intentionally lenient: the LVGL benchmark may not have reached
+    its first interesting frame yet.  The 500ms GLib timer means we receive the
+    frame quickly, but LVGL boot takes ~2–5 s.  The ``qemu_ws_proc`` fixture is
+    module-scoped so QEMU has been running for the duration of the previous
+    tests, giving it enough time to boot.
+    """
+    pillow = pytest.importorskip("PIL.Image", reason="Pillow not installed; pip install Pillow")
+
+    try:
+        from websockets.sync.client import connect as ws_connect
+    except ImportError:
+        pytest.skip("websockets package not available; pip install websockets")
+
+    import pathlib
+
+    artifacts = pathlib.Path(__file__).resolve().parents[1] / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    out_path = artifacts / "qemu-ws-frame-001.png"
+
+    with ws_connect(
+        f"ws://{_WS_HOST}:{_WS_PORT}/",
+        open_timeout=5,
+        close_timeout=3,
+        ping_interval=None,
+        max_size=None,
+    ) as ws:
+        header_msg = ws.recv(timeout=_HEADER_TIMEOUT_S)
+        assert isinstance(header_msg, str), \
+            f"Expected JSON TEXT header; got {type(header_msg).__name__}"
+        header = json.loads(header_msg)
+
+        w            = header["w"]
+        h            = header["h"]
+        fmt          = header["format"]
+        bpp          = header["stride_bytes"] // w
+
+        # Loop through frames until we find one with non-blank content.
+        # The 500 ms GLib timer may fire several times before LVGL paints its
+        # first frame (~3 s after firmware boot).  The module-scoped fixture
+        # means QEMU has been running since the earlier tests, so the first
+        # frame we receive here is usually already populated; the loop is a
+        # safety net for very fast CI machines.
+        pixel_msg = None
+        deadline  = time.monotonic() + _FRAME_TIMEOUT_S
+        while time.monotonic() < deadline:
+            msg = ws.recv(timeout=2.0)
+            if isinstance(msg, bytes) and len(msg) > 8:
+                raw = msg[8:]
+                # Quick non-blank check: any nonzero 16-bit word in first 2 KB
+                if any(raw[i] or raw[i + 1] for i in range(0, min(len(raw), 2048), 2)):
+                    pixel_msg = msg
+                    break
+                pixel_msg = msg  # save last blank frame as fallback
+        assert pixel_msg is not None, "No BINARY pixel frame received before timeout"
+
+    pixels = pixel_msg[8:]  # skip 8-byte frame header
+
+    # Convert to RGB PIL image for analysis
+    import array as _array
+    if fmt == "x8r8g8b8":
+        # x8r8g8b8 LE: bytes [B, G, R, X] per pixel → PIL RGB
+        rgb = bytearray(w * h * 3)
+        src = bytearray(pixels)
+        for i in range(w * h):
+            rgb[i * 3 + 0] = src[i * 4 + 2]  # R
+            rgb[i * 3 + 1] = src[i * 4 + 1]  # G
+            rgb[i * 3 + 2] = src[i * 4 + 0]  # B
+        img = pillow.frombytes("RGB", (w, h), bytes(rgb))
+    elif fmt == "r5g6b5":
+        # r5g6b5 LE: 16-bit words
+        from PIL import Image as _PIL
+        words = _array.array("H", pixels)
+        words.byteswap() if __import__("sys").byteorder == "big" else None
+        rgb = bytearray(w * h * 3)
+        for i, p in enumerate(words):
+            r5 = (p >> 11) & 0x1f
+            g6 = (p >>  5) & 0x3f
+            b5 =  p        & 0x1f
+            rgb[i * 3 + 0] = (r5 << 3) | (r5 >> 2)
+            rgb[i * 3 + 1] = (g6 << 2) | (g6 >> 4)
+            rgb[i * 3 + 2] = (b5 << 3) | (b5 >> 2)
+        img = _PIL.frombytes("RGB", (w, h), bytes(rgb))
+    else:
+        pytest.skip(f"Unknown pixel format {fmt!r}; can't decode for Pillow analysis")
+
+    img.save(str(out_path))
+    assert out_path.exists() and out_path.stat().st_size > 0, \
+        f"failed to save {out_path}"
+
+    # Analyse pixel content
+    import collections
+    pixel_data = list(img.getdata())
+    pixel_sum    = sum(r + g + b for r, g, b in pixel_data)
+    unique_count = len(set(pixel_data))
+
+    assert pixel_sum > 0, (
+        f"Frame appears blank (pixel_sum=0). "
+        f"Saved to {out_path}. LVGL may not have painted yet."
+    )
+    assert unique_count >= 8, (
+        f"Frame has only {unique_count} distinct colour(s); expected ≥ 8. "
+        f"Saved to {out_path}."
+    )
