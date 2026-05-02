@@ -325,8 +325,8 @@ void esp_rgb_ws_announce_surface(ESPRgbState *s)
     const char     *fmt_str;
     int             stride_bytes;
 
-    fmt_str      = (s->bpp == BPP_16) ? "r5g6b5" : "x8r8g8b8";
-    stride_bytes = (int) s->width * ((s->bpp == BPP_16) ? 2 : 4);
+    fmt_str      = "r5g6b5";  /* firmware writes uint16_t RGB565 directly to VRAM */
+    stride_bytes = (int) s->width * 2;
 
     snprintf(json, sizeof(json),
              "{\"version\":1,\"w\":%u,\"h\":%u,\"format\":\"%s\","
@@ -359,9 +359,8 @@ void esp_rgb_ws_announce_surface(ESPRgbState *s)
 void esp_rgb_ws_broadcast_frame(ESPRgbState *s)
 {
     ESPRgbWsClient *c, *next_c;
-    DisplaySurface *surf;
     void           *pixels;
-    uint32_t        w, h, bpp, pixel_size;
+    uint32_t        w, h, pixel_size;
 
     if (g_ws.disabled || !g_ws.listener) {
         return;
@@ -370,16 +369,27 @@ void esp_rgb_ws_broadcast_frame(ESPRgbState *s)
         return;
     }
 
-    surf = qemu_console_surface(s->con);
-    if (!surf) {
-        return;
-    }
+    w          = s->width;
+    h          = s->height;
+    pixel_size = w * h * 2;  /* r5g6b5 = 2 bytes/pixel (firmware writes uint16_t) */
 
-    pixels     = surface_data(surf);
-    w          = (uint32_t) surface_width(surf);
-    h          = (uint32_t) surface_height(surf);
-    bpp        = (uint32_t) surface_bytes_per_pixel(surf);
-    pixel_size = w * h * bpp;
+    /*
+     * Read the VRAM directly instead of using qemu_console_surface().
+     * The firmware writes RGB565 uint16_t values via qemu_vram_mirror() directly
+     * to the VRAM address space, bypassing the MMIO display controller registers.
+     * rgb_update() (which DMA-copies VRAM → surface) never fires without a display
+     * listener, so qemu_console_surface() always returns a blank frame.
+     * Reading address space 0 with size w*h*2 gives us the live RGB565 pixels.
+     */
+    pixels = g_malloc(pixel_size);
+    {
+        /* memory_region_get_ram_ptr() returns the host-side pointer to the
+         * RAM backing of s->vram directly.  address_space_rw() can return
+         * stale zeros after memory_region_add_subregion_overlap() adds the
+         * same MemoryRegion to sys_mem (flatview invalidation side-effect). */
+        void *vram_raw = memory_region_get_ram_ptr(&s->vram);
+        memcpy(pixels, vram_raw, pixel_size);
+    }
 
     QLIST_FOREACH_SAFE(c, &g_ws.clients, next, next_c) {
         uint8_t frame_hdr[8];
@@ -407,4 +417,5 @@ void esp_rgb_ws_broadcast_frame(ESPRgbState *s)
             c->seq++;
         }
     }
+    g_free(pixels);
 }
