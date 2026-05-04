@@ -350,3 +350,85 @@ API 兼容性覆盖范围（STA 阶段最低要求）：
 ## Other backlog items (lower priority)
 
 (none yet — add new entries above this line)
+
+---
+
+## NEXT-003 — LVGL + Wi-Fi 集成 Demo（QEMU 无硬件全流程验证）
+
+**Status:** 🔲 **NOT STARTED**
+
+### Problem
+
+NEXT-001（QEMU 帧缓冲 → Chrome）和 NEXT-002（QEMU Wi-Fi STA）
+已分别验证了显示和网络两条路径，但两者目前是**独立的**示例：
+- `main/main.c` 跑 LVGL benchmark，无任何网络逻辑
+- `examples/wifi_sta/` 跑 Wi-Fi 连接，无任何显示逻辑
+
+真实的 ESP32 IoT 产品通常需要同时运行 LVGL 界面 **和** Wi-Fi 通信。
+本 item 将两者合并为一个可在 QEMU 中端到端验证的集成 Demo。
+
+### 目标用户体验
+
+1. 执行 `bash tools/run-direct-demo.sh` 启动 QEMU；
+2. 打开 `web/qemu-direct.html`，看到 LVGL 界面显示**连接进度**：
+   - 「Wi-Fi Connecting…」→ 「Connected: 192.168.x.x」
+3. 串口日志同时打印：`I (xxx) demo: got ip:192.168.x.x`
+4. 整个流程无需真实 ESP32 硬件。
+
+### Concrete subtasks（in order）
+
+1. **创建 `main/wifi_ui.c` + `main/wifi_ui.h`**
+   - 在 LVGL 上绘制一个简单状态标签（`lv_label`）
+   - 提供 `wifi_ui_set_status(const char *msg)` API
+   - 主 app 在 Wi-Fi 事件回调中调用该 API 更新界面
+
+2. **修改 `main/main.c`**（最小改动）
+   - 在 `app_main` 中初始化 Wi-Fi + 注册事件处理函数
+   - `WIFI_EVENT_STA_CONNECTED` 时调用 `wifi_ui_set_status("Connected: ...")`
+   - `IP_EVENT_STA_GOT_IP` 时打印 `got ip:`（和 wifi_sta 示例一致）
+   - SSID/密码通过 `sdkconfig` menuconfig 配置（`CONFIG_DEMO_WIFI_SSID` /
+     `CONFIG_DEMO_WIFI_PASSWORD`）；QEMU 默认值写入 `sdkconfig.defaults`
+
+3. **添加 Kconfig 选项**（`main/Kconfig.projbuild`）
+   - `DEMO_WIFI_SSID` string，default `"QEMU_TEST"`
+   - `DEMO_WIFI_PASSWORD` string，default `"qemu1234"`
+
+4. **更新 `tools/run-direct-demo.sh`**
+   - 启动 mock-wpa-supplicant（`tools/mock_wpa_supplicant.py`）
+   - 启动 QEMU（带 `WIFI_CTRL_SOCKET` 指向 mock 的 socket 路径）
+   - 启动 HTTP server serving `web/`
+
+5. **自动化测试 `tests/test_qemu_integrated_demo.py`**
+   - 启动 mock-wpa-supplicant + QEMU
+   - 断言串口出现 `got ip:` (timeout 30s)
+   - 通过 WebSocket 连接 `ws://localhost:9334/` 断言帧缓冲有内容
+     （canvas unique ≥ 8，类似 `test_qemu_direct_canvas.py`）
+
+### Files this work will touch / create
+
+| Area | Path |
+|---|---|
+| 新模块 | `main/wifi_ui.c`, `main/wifi_ui.h` (new) |
+| 修改入口 | `main/main.c` (add Wi-Fi init + event handler) |
+| Kconfig | `main/Kconfig.projbuild` (new) |
+| sdkconfig 默认 | `sdkconfig.defaults` (add DEMO_WIFI_* defaults) |
+| 启动脚本 | `tools/run-direct-demo.sh` (add mock-wpa + QEMU wifi flag) |
+| 测试 | `tests/test_qemu_integrated_demo.py` (new) |
+
+### Acceptance criteria
+
+- [ ] `idf.py build` 零警告，固件包含 LVGL + Wi-Fi 逻辑。
+- [ ] `bash tools/run-direct-demo.sh` 在 QEMU 中启动，打开
+      `web/qemu-direct.html` 可以看到 LVGL 界面从「Connecting…」
+      变为「Connected: 192.168.x.x」。
+- [ ] 串口输出 `got ip:` 行出现（和 NEXT-002 的 wifi_sta 验证一致）。
+- [ ] `pytest -q tests/test_qemu_integrated_demo.py` 通过。
+- [ ] 现有测试套件（93 passed, 1 skipped）无回归。
+- [ ] 不需要真实 ESP32 硬件、路由器、或 wpa_supplicant 守护进程。
+
+### Known limitations（v1 scope）
+
+- LVGL UI 极简（单标签），仅作集成验证，不追求美观。
+- SSID/密码以明文写入 `sdkconfig.defaults`（QEMU 测试专用值），
+  生产代码应使用 NVS 或 Provisioning。
+- 不实现真实 TCP/UDP 数据通路（继承 NEXT-002 的限制）。

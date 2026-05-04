@@ -1,23 +1,12 @@
 /**
  * @file esp_wifi_shim.c
- * @brief QEMU virtual Wi-Fi driver — esp_wifi_* API stubs (STA mode).
+ * @brief QEMU virtual Wi-Fi driver — core lifecycle API.
  *
- * This component is compiled ONLY when CONFIG_ESP_WIFI_QEMU=y.
- * It replaces the real Wi-Fi blob driver with MMIO writes to the
- * QEMU esp_wifi virtual device (docs/qemu-wifi.md).
+ * Contains: shared state definitions, wifi_qemu_send_cmd(), wifi_event_task(),
+ * and the lifecycle API (init/deinit/set_mode/get_mode/start/stop).
  *
- * Implementation status (Day 11):
- *   [x] esp_wifi_init / esp_wifi_deinit
- *   [x] esp_wifi_set_mode / esp_wifi_get_mode
- *   [x] esp_wifi_start / esp_wifi_stop        (posts WIFI_EVENT_STA_START/STOP)
- *   [x] esp_wifi_set_config / esp_wifi_get_config  (MMIO SSID/PASS write)
- *   [x] esp_wifi_connect / esp_wifi_disconnect (async; event task delivers events)
- *   [x] esp_wifi_get_mac / esp_wifi_set_mac        (CMD_GET_MAC + sysfs)
- *   [x] esp_wifi_scan_start / esp_wifi_scan_stop
- *   [x] esp_wifi_scan_get_ap_num / ap_records      (MMIO scan register read)
- *   [x] wifi_qemu_send_cmd() — real MMIO polling loop
- *   [x] Event dispatch task — CONNECTED / GOT_IP / DISCONNECTED / SCAN_DONE
- *   [x] esp_netif binding — set IP info on WIFI_STA_DEF netif after GOT_IP
+ * Config/connect/MAC APIs live in esp_wifi_config.c.
+ * Scan APIs live in esp_wifi_scan.c.
  */
 
 #include "sdkconfig.h"
@@ -32,6 +21,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi_qemu.h"
+#include "esp_wifi_private.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -39,12 +29,12 @@
 static const char *TAG = "wifi_qemu";
 
 /* ------------------------------------------------------------------ */
-/*  Internal state                                                      */
+/*  Shared state definitions                                            */
 /* ------------------------------------------------------------------ */
 
 static bool          s_inited     = false;
 static wifi_mode_t   s_mode       = WIFI_MODE_NULL;
-static wifi_config_t s_sta_cfg    = {};
+wifi_config_t        s_sta_cfg    = {};    /* exported via esp_wifi_private.h */
 static TaskHandle_t  s_evt_task   = NULL;
 static esp_netif_t  *s_sta_netif  = NULL;
 
@@ -115,7 +105,7 @@ static void wifi_event_task(void *arg)
         switch (evt) {
         case WIFI_EVT_CONNECTED: {
             wifi_event_sta_connected_t ev = {
-                .ssid_len = s_sta_cfg.sta.ssid_len,
+                .ssid_len = (uint8_t)strnlen((char *)s_sta_cfg.sta.ssid, 32),
                 .channel  = 1,
                 .authmode = WIFI_AUTH_WPA2_PSK,
                 .aid      = 1,
@@ -156,7 +146,7 @@ static void wifi_event_task(void *arg)
         }
         case WIFI_EVT_DISCONNECTED: {
             wifi_event_sta_disconnected_t ev = {
-                .ssid_len = s_sta_cfg.sta.ssid_len,
+                .ssid_len = (uint8_t)strnlen((char *)s_sta_cfg.sta.ssid, 32),
                 .reason   = WIFI_REASON_ASSOC_LEAVE,
                 .rssi     = 0,
             };
@@ -260,141 +250,6 @@ esp_err_t esp_wifi_stop(void)
                        portMAX_DELAY);
     }
     return ret;
-}
-
-esp_err_t esp_wifi_set_config(wifi_interface_t interface, wifi_config_t *conf)
-{
-    if (interface != WIFI_IF_STA) {
-        return ESP_ERR_NOT_SUPPORTED;
-    }
-    if (!conf) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    memcpy(&s_sta_cfg, conf, sizeof(wifi_config_t));
-
-    /* Write SSID to MMIO */
-    size_t ssid_len = strlen((char *)s_sta_cfg.sta.ssid);
-    ssid_len = ssid_len > 32 ? 32 : ssid_len;
-    for (size_t i = 0; i < ssid_len; i += 4) {
-        uint32_t chunk = 0;
-        memcpy(&chunk, s_sta_cfg.sta.ssid + i, MIN(4, ssid_len - i));
-        wifi_qemu_write(WIFI_REG_SSID_BASE + i, chunk);
-    }
-    wifi_qemu_write(WIFI_REG_SSID_LEN, (uint32_t)ssid_len);
-
-    /* Write password to MMIO */
-    size_t pass_len = strlen((char *)s_sta_cfg.sta.password);
-    pass_len = pass_len > 64 ? 64 : pass_len;
-    for (size_t i = 0; i < pass_len; i += 4) {
-        uint32_t chunk = 0;
-        memcpy(&chunk, s_sta_cfg.sta.password + i, MIN(4, pass_len - i));
-        wifi_qemu_write(WIFI_REG_PASS_BASE + i, chunk);
-    }
-    wifi_qemu_write(WIFI_REG_PASS_LEN, (uint32_t)pass_len);
-    ESP_LOGD(TAG, "set_config SSID=%s (len=%zu)", s_sta_cfg.sta.ssid, ssid_len);
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_get_config(wifi_interface_t interface, wifi_config_t *conf)
-{
-    if (interface != WIFI_IF_STA || !conf) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    memcpy(conf, &s_sta_cfg, sizeof(wifi_config_t));
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_connect(void)
-{
-    /*
-     * Non-blocking: write CMD_CONNECT and return immediately.
-     * The event dispatch task delivers WIFI_EVENT_STA_CONNECTED and
-     * IP_EVENT_STA_GOT_IP asynchronously as the QEMU device progresses
-     * through the wpa_supplicant connection sequence.
-     */
-    ESP_LOGI(TAG, "connect SSID=%s", s_sta_cfg.sta.ssid);
-    wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_CONNECT);
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_disconnect(void)
-{
-    ESP_LOGI(TAG, "disconnect");
-    wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_DISCONNECT);
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_get_mac(wifi_interface_t ifx, uint8_t mac[6])
-{
-    if (ifx != WIFI_IF_STA || !mac) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    wifi_qemu_send_cmd(WIFI_CMD_GET_MAC, 1000);
-    uint32_t mac0 = wifi_qemu_read(WIFI_REG_MAC0);
-    uint32_t mac1 = wifi_qemu_read(WIFI_REG_MAC1);
-    memcpy(mac,     &mac0, 4);
-    mac[4] = (uint8_t)((mac1 >> 24) & 0xff);
-    mac[5] = (uint8_t)((mac1 >> 16) & 0xff);
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_set_mac(wifi_interface_t ifx, const uint8_t mac[6])
-{
-    (void)ifx;
-    (void)mac;
-    /* Virtual MAC is determined by the host; setting it is a no-op in v1. */
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_scan_start(const wifi_scan_config_t *config, bool block)
-{
-    (void)config;
-    (void)block;
-    return wifi_qemu_send_cmd(WIFI_CMD_SCAN, block ? 15000 : 0);
-}
-
-esp_err_t esp_wifi_scan_stop(void)
-{
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_scan_get_ap_num(uint16_t *number)
-{
-    if (!number) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    *number = (uint16_t)wifi_qemu_read(WIFI_REG_SCAN_COUNT);
-    return ESP_OK;
-}
-
-esp_err_t esp_wifi_scan_get_ap_records(uint16_t *number, wifi_ap_record_t *ap_records)
-{
-    if (!number || !ap_records) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    uint16_t total = (uint16_t)wifi_qemu_read(WIFI_REG_SCAN_COUNT);
-    if (total > *number) { total = *number; }
-    for (uint16_t i = 0; i < total; i++) {
-        wifi_qemu_write(WIFI_REG_SCAN_IDX, i);
-        uint32_t ssid_len = wifi_qemu_read(WIFI_REG_SCAN_SSID_LEN);
-        ssid_len = ssid_len > 32 ? 32 : ssid_len;
-        uint8_t ssid[33] = {0};
-        for (uint32_t j = 0; j < ssid_len; j += 4) {
-            uint32_t chunk = wifi_qemu_read(WIFI_REG_SCAN_SSID_BASE + j);
-            memcpy(ssid + j, &chunk, MIN(4, ssid_len - j));
-        }
-        memcpy(ap_records[i].ssid, ssid, ssid_len);
-        ap_records[i].rssi = (int8_t)(uint8_t)wifi_qemu_read(WIFI_REG_SCAN_RSSI);
-        uint32_t b0 = wifi_qemu_read(WIFI_REG_SCAN_BSSID0);
-        uint32_t b1 = wifi_qemu_read(WIFI_REG_SCAN_BSSID1);
-        memcpy(ap_records[i].bssid, &b0, 4);
-        ap_records[i].bssid[4] = (uint8_t)((b1 >> 24) & 0xff);
-        ap_records[i].bssid[5] = (uint8_t)((b1 >> 16) & 0xff);
-        ap_records[i].authmode = WIFI_AUTH_WPA2_PSK; /* conservative default */
-        ap_records[i].primary  = 1;
-    }
-    *number = total;
-    return ESP_OK;
 }
 
 #endif /* CONFIG_ESP_WIFI_QEMU */
