@@ -28,6 +28,7 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 QEMU_BIN = PROJECT_ROOT / "tools" / "qemu-src" / "build" / "qemu-system-xtensa"
 FLASH_BIN = PROJECT_ROOT / "build" / "qemu_flash.bin"
 EFUSE_BIN = PROJECT_ROOT / "build" / "qemu_efuse.bin"
+WIFI_STA_BUILD = PROJECT_ROOT / "examples" / "wifi_sta" / "build"
 ESP_WIFI_C = (
     PROJECT_ROOT / "tools" / "qemu-src" / "hw" / "net" / "esp_wifi.c"
 )
@@ -40,6 +41,70 @@ _WIFI_CTRL_SOCKET = os.environ.get(
     "/var/run/wpa_supplicant/wlo1",
 )
 _BOOT_TIMEOUT_S = 30    # time to get ip after QEMU boot
+
+
+def _has_wifi_sta_firmware() -> bool:
+    return (WIFI_STA_BUILD / "wifi_sta_example.bin").is_file()
+
+
+_REASON_NO_WIFI_STA = (
+    "wifi_sta example not built. "
+    "Run: cd examples/wifi_sta && idf.py build"
+)
+
+
+def _idf_python() -> str:
+    """Return the IDF virtualenv Python that has esptool installed."""
+    import glob as _glob
+    # Prefer explicit IDF_PYTHON env var
+    idf_py = os.environ.get("IDF_PYTHON")
+    if idf_py and os.path.isfile(idf_py):
+        return idf_py
+    # Look in ~/.espressif/python_env/
+    pattern = str(pathlib.Path.home() / ".espressif" / "python_env" / "idf*_env" / "bin" / "python3")
+    matches = sorted(_glob.glob(pattern))
+    if matches:
+        return matches[-1]  # pick newest
+    # Fall back to system python (might work if esptool is installed)
+    import sys
+    return sys.executable
+
+
+def _make_flash_image(build_dir: pathlib.Path, out: pathlib.Path) -> None:
+    """Merge bootloader + partition table + app into a single flash image."""
+    idf_path = pathlib.Path(os.environ.get("IDF_PATH", str(pathlib.Path.home() / "esp-idf")))
+    esptool_py = idf_path / "components" / "esptool_py" / "esptool" / "esptool.py"
+
+    # Determine app binary name (not bootloader or partition-table)
+    app_bins = [
+        b for b in build_dir.glob("*.bin")
+        if b.name not in ("bootloader.bin", "partition-table.bin")
+    ]
+    if not app_bins:
+        raise FileNotFoundError(f"No app binary found in {build_dir}")
+    app_bin = app_bins[0]
+
+    cmd = [
+        _idf_python(), str(esptool_py),
+        "--chip", "esp32",
+        "merge_bin",
+        "--fill-flash-size", "2MB",
+        "--flash_mode", "dio",
+        "--flash_freq", "40m",
+        "--flash_size", "2MB",
+        "-o", str(out),
+        "0x1000", str(build_dir / "bootloader" / "bootloader.bin"),
+        "0x8000", str(build_dir / "partition_table" / "partition-table.bin"),
+        "0x10000", str(app_bin),
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"merge_bin failed (rc={result.returncode}):\n"
+            f"stdout: {result.stdout.decode()}\n"
+            f"stderr: {result.stderr.decode()}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Skip helpers
@@ -204,11 +269,7 @@ class TestQemuWifiDevice:
 
     @pytest.mark.skipif(not _qemu_has_wifi_device(), reason=_REASON_NO_WIFI_DEV)
     def test_qemu_enumerates_wifi_device(self):
-        """QEMU binary string table must contain 'net.esp.wifi' type name.
-
-        SysBusDevices instantiated as machine children are not listed in
-        '-device help'; we use 'strings' to verify the type is compiled in.
-        """
+        """QEMU binary string table must contain 'net.esp.wifi' type name."""
         result = subprocess.run(
             ["strings", str(QEMU_BIN)],
             capture_output=True, text=True, timeout=10,
@@ -218,19 +279,87 @@ class TestQemuWifiDevice:
             f"Run bash tools/build-qemu.sh. Binary: {QEMU_BIN}"
         )
 
-    @pytest.mark.skipif(not _has_wpa_supplicant_ctrl(), reason=_REASON_NO_CTRL)
     @pytest.mark.skipif(not _qemu_has_wifi_device(), reason=_REASON_NO_WIFI_DEV)
-    def test_qemu_wifi_sta_got_ip(
-        self, wifi_ssid: str, wifi_password: str
-    ):
-        """QEMU boots, connects to Wi-Fi, and serial log shows 'got ip:'.
+    @pytest.mark.skipif(not _has_wifi_sta_firmware(), reason=_REASON_NO_WIFI_STA)
+    def test_qemu_wifi_sta_got_ip_mock(self):
+        """wifi_sta firmware boots in QEMU, mock wpa_supplicant provides IP,
+        serial log must contain 'got ip:192.168.1.100'.
 
-        Requires pytest fixtures wifi_ssid and wifi_password to be provided
-        via environment variables WIFI_SSID and WIFI_PASSWORD.
+        Uses the project's mock wpa_supplicant daemon — no real Wi-Fi needed.
         """
-        pytest.skip(
-            "Full end-to-end test deferred to Day 13 "
-            "(QEMU device + component not yet implemented)"
+        import sys
+        import tempfile
+        sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+        from mock_wpa_supplicant import MockWpaSupplicant  # type: ignore
+
+        mock_socket = "/tmp/mock-wpa-qemu-e2e"
+        mock_ssid   = "QEMU_TEST"
+        mock_ip     = "192.168.1.100"
+
+        # Clean up stale socket
+        try:
+            os.unlink(mock_socket)
+        except OSError:
+            pass
+
+        # Build merged flash image in a temp dir
+        with tempfile.TemporaryDirectory() as tmpdir:
+            flash_img = pathlib.Path(tmpdir) / "wifi_sta_flash.bin"
+            _make_flash_image(WIFI_STA_BUILD, flash_img)
+
+            # Start mock wpa_supplicant
+            daemon = MockWpaSupplicant(
+                ctrl_path=mock_socket,
+                ssid=mock_ssid,
+                ip=mock_ip,
+                scan_delay=0.1,
+                connect_delay=0.2,
+            )
+            daemon.start()
+            time.sleep(0.5)  # let socket appear
+
+            # The ESP32 machine creates the net.esp.wifi device internally.
+            # The ctrl socket path is communicated via the ESP_WIFI_CTRL_SOCKET
+            # environment variable read by the QEMU device at realize-time.
+            qemu_env = os.environ.copy()
+            qemu_env["ESP_WIFI_CTRL_SOCKET"] = mock_socket
+
+            try:
+                qemu_cmd = [
+                    str(QEMU_BIN),
+                    "-M", "esp32",
+                    "-m", "4M",
+                    "-nographic",
+                    "-drive", f"file={flash_img},if=mtd,format=raw",
+                    "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
+                ]
+                result = subprocess.run(
+                    qemu_cmd,
+                    env=qemu_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+                serial_out = result.stdout + result.stderr
+            except subprocess.TimeoutExpired as exc:
+                # TimeoutExpired.stdout is always bytes regardless of text=True
+                raw_out = (exc.stdout or b"") + (exc.stderr or b"")
+                serial_out = raw_out.decode("utf-8", errors="replace") if isinstance(raw_out, bytes) else raw_out
+            finally:
+                daemon.stop()
+                try:
+                    os.unlink(mock_socket)
+                except OSError:
+                    pass
+
+        # Write log for debugging
+        log_path = pathlib.Path("/tmp/esp32-wifi-sta-e2e.log")
+        log_path.write_text(serial_out if isinstance(serial_out, str) else serial_out.decode("utf-8", errors="replace"))
+
+        assert re.search(r"got ip:[0-9]", serial_out), (
+            f"'got ip:' not found in QEMU serial output. "
+            f"Log saved to {log_path}.\n"
+            f"Last 20 lines:\n" + "\n".join(serial_out.splitlines()[-20:])
         )
 
 

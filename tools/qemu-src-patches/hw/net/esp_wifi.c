@@ -404,6 +404,8 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
         break;
 
     case WIFI_CMD_SET_MODE_STA:
+        /* Synchronous no-op: just acknowledge */
+        esp_wifi_post_event(s, WIFI_EVT_INIT_DONE);
         break;
 
     case WIFI_CMD_START:
@@ -488,6 +490,7 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
                 fclose(f);
             }
         }
+        esp_wifi_post_event(s, WIFI_EVT_INIT_DONE); /* ACK for wifi_qemu_send_cmd */
         break;
 
     default:
