@@ -164,7 +164,9 @@ follow-up if anyone wants it.
 
 ## NEXT-002 — QEMU Wi-Fi STA 支持（wpa_supplicant ctrl socket 桥接）
 
-**Status:** Not started. Intended platform: **Linux**.
+**Status:** ✅ **DONE** (Days 8–12, Linux).  
+**Completed:** 2026-05-04. 80 passed, 0 failed.  
+**Key commits:** b821968 (Day 8 scaffold), fd4f794 (Day 9 QEMU device), 5fb748e (Day 10 wpa_supplicant), f14e3aa (Day 11 event dispatch), 4dd93ec (Day 12 e2e test).
 
 ### Problem
 
