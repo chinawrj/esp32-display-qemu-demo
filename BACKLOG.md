@@ -355,7 +355,7 @@ API 兼容性覆盖范围（STA 阶段最低要求）：
 
 ## NEXT-003 — LVGL + Wi-Fi 集成 Demo（QEMU 无硬件全流程验证）
 
-**Status:** 🔲 **NOT STARTED**
+**Status:** 🔲 **NOT STARTED** (blocked on NEXT-003 TCP/IP data plane — ✅ completed Day 14)
 
 ### Problem
 
