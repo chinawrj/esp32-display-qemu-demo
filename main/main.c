@@ -2,14 +2,21 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
+#include "nvs_flash.h"
+#include "lwip/ip4_addr.h"
 #include "lvgl.h"
 #include "demos/lv_demos.h"
 
 #include "fb_dump.h"
 #include "qemu_vram.h"
+#include "wifi_ui.h"
 
 static const char *TAG = "app_main";
 
@@ -30,6 +37,77 @@ static const char *TAG = "app_main";
 static volatile uint32_t s_flush_count = 0;
 static volatile bool s_benchmark_done = false;
 static volatile bool s_fb_dumped = false;
+
+/* ---------------------------------------------------------------------------
+ * Wi-Fi — connection state
+ * ------------------------------------------------------------------------ */
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
+
+static EventGroupHandle_t s_wifi_event_group;
+
+static void demo_wifi_event_handler(void *arg, esp_event_base_t event_base,
+                                    int32_t event_id, void *event_data)
+{
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+        wifi_ui_set_status("Wi-Fi: connecting...");
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        esp_wifi_connect();
+        wifi_ui_set_status("Wi-Fi: reconnecting...");
+        ESP_LOGW(TAG, "Wi-Fi disconnected, retrying");
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *ev = (ip_event_got_ip_t *)event_data;
+        char msg[64];
+        snprintf(msg, sizeof(msg), "got ip:" IPSTR, IP2STR(&ev->ip_info.ip));
+        ESP_LOGI(TAG, "%s", msg);
+        wifi_ui_set_status(msg);
+        if (s_wifi_event_group) {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        }
+    }
+}
+
+static void demo_wifi_start(void)
+{
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    s_wifi_event_group = xEventGroupCreate();
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &demo_wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &demo_wifi_event_handler, NULL, NULL));
+
+    wifi_config_t wifi_cfg = {
+        .sta = {
+            .ssid     = CONFIG_DEMO_WIFI_SSID,
+            .password = CONFIG_DEMO_WIFI_PASSWORD,
+            .threshold.authmode = WIFI_AUTH_OPEN,
+        },
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
+    esp_err_t start_ret = esp_wifi_start();
+    if (start_ret != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_start: %s (0x%x) — continuing in QEMU",
+                 esp_err_to_name(start_ret), start_ret);
+    } else {
+        ESP_LOGI(TAG, "demo_wifi_start: SSID=%s", CONFIG_DEMO_WIFI_SSID);
+    }
+}
 
 /* Full-screen framebuffer allocated at runtime (heap) — placing 64 KB in
  * .bss overflows ESP32's dram0_0_seg. Heap allocation also lets us release
@@ -113,8 +191,25 @@ void app_main(void)
     lv_demo_benchmark();
     ESP_LOGI(TAG, "lv_demo_benchmark started");
 
-    /* Drive LVGL until benchmark signals end OR loop cap reached */
+    /* Wi-Fi status label — created after benchmark widgets so it renders on top */
+    wifi_ui_init();
+
+    /* Drive LVGL until benchmark signals end OR loop cap reached.
+     * Wi-Fi init is deferred until AFTER the benchmark so its high-priority
+     * tasks (prio 23) do not slow down the QEMU simulation during rendering. */
     for (int i = 0; i < LVGL_LOOP_CYCLES && !s_benchmark_done; i++) {
+        wifi_ui_tick();
+        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(LVGL_LOOP_DELAY_MS));
+    }
+
+    /* Benchmark complete — now start Wi-Fi in background.
+     * Events fire asynchronously; wifi_ui_set_status() updates the label. */
+    demo_wifi_start();
+
+    /* Brief LVGL loop to let Wi-Fi events update the status label */
+    for (int i = 0; i < 100; i++) {
+        wifi_ui_tick();
         lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(LVGL_LOOP_DELAY_MS));
     }

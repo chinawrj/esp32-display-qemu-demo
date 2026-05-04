@@ -40,7 +40,7 @@ static bool          s_inited     = false;
 static wifi_mode_t   s_mode       = WIFI_MODE_NULL;
 wifi_config_t        s_sta_cfg    = {};    /* exported via esp_wifi_private.h */
 static TaskHandle_t  s_evt_task   = NULL;
-static esp_netif_t  *s_sta_netif  = NULL;
+esp_netif_t  *s_sta_netif  = NULL;
 
 /* ------------------------------------------------------------------ */
 /*  Forward declarations                                               */
@@ -248,7 +248,7 @@ esp_err_t esp_wifi_get_mode(wifi_mode_t *mode)
 esp_err_t esp_wifi_start(void)
 {
     ESP_LOGI(TAG, "start");
-    esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 3000);
+    esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 500);
     if (ret == ESP_OK) {
         esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START, NULL, 0,
                        portMAX_DELAY);

@@ -42,3 +42,16 @@ CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y
 CONFIG_LV_FONT_MONTSERRAT_12=y
 CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
+
+# --- Demo Wi-Fi Configuration ---
+# SSID and password for QEMU integration demo (used with mock_wpa_supplicant)
+CONFIG_DEMO_WIFI_SSID="QEMU_TEST"
+CONFIG_DEMO_WIFI_PASSWORD="qemu1234"
+
+# Wi-Fi component settings for QEMU (use virtual Wi-Fi driver, no real PHY)
+CONFIG_ESP_WIFI_QEMU=y
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+
+# Custom partition table — factory partition 1.5 MB to fit Wi-Fi + LVGL binary
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

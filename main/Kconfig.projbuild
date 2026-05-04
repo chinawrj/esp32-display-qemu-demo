@@ -1,0 +1,16 @@
+menu "Demo Wi-Fi Configuration"
+
+    config DEMO_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "QEMU_TEST"
+        help
+            Wi-Fi SSID used by the QEMU integration demo.
+            Must match the mock_wpa_supplicant SSID (default: QEMU_TEST).
+
+    config DEMO_WIFI_PASSWORD
+        string "Wi-Fi Password"
+        default "qemu1234"
+        help
+            Wi-Fi password for the QEMU integration demo.
+
+endmenu

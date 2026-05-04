@@ -20,59 +20,97 @@ LOG_FILE="${LOG_FILE:-/tmp/esp32-qemu-serial.log}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
-# Prefer locally-built QEMU if available (Day 14 work). Override via
-# QEMU_BIN=... or set USE_LOCAL_QEMU=0 to force the IDF-managed binary.
+# ---------------------------------------------------------------------------
+# 1. Locate QEMU binary — prefer local fork, fall back to IDF-managed.
+#    Override with QEMU_BIN=... env or set USE_LOCAL_QEMU=0 to skip fork.
+# ---------------------------------------------------------------------------
 if [ -z "${QEMU_BIN:-}" ] && [ "${USE_LOCAL_QEMU:-1}" = "1" ]; then
     LOCAL_QEMU="$PROJECT_DIR/tools/qemu-src/build/qemu-system-xtensa"
     [ -x "$LOCAL_QEMU" ] && QEMU_BIN="$LOCAL_QEMU"
 fi
-if [ -n "${QEMU_BIN:-}" ] && [ -x "${QEMU_BIN}" ]; then
-    QEMU_BIN_DIR="$(dirname "$QEMU_BIN")"
-    PATH="${QEMU_BIN_DIR}:${PATH}"
-    export PATH
-    echo "[run-qemu] using local QEMU: $QEMU_BIN"
+if [ -z "${QEMU_BIN:-}" ]; then
+    QEMU_BIN="$(find "$HOME/.espressif/tools/qemu-xtensa" -name 'qemu-system-xtensa' 2>/dev/null | sort | tail -1 || true)"
 fi
+if [ -z "${QEMU_BIN:-}" ] || [ ! -x "${QEMU_BIN}" ]; then
+    echo "ERROR: qemu-system-xtensa not found. Build the local fork or install via idf_tools.py." >&2
+    exit 2
+fi
+echo "[run-qemu] using QEMU: $QEMU_BIN"
 
+# ---------------------------------------------------------------------------
+# 2. Verify firmware binary exists.
+# ---------------------------------------------------------------------------
 if [ ! -f build/esp32-display-qemu-demo.bin ]; then
     echo "ERROR: build/esp32-display-qemu-demo.bin not found. Run 'idf.py build' first." >&2
     exit 2
 fi
 
-# Ensure ESP-IDF env is sourced (also re-source if IDF_PATH is set but idf.py
-# is not on PATH, e.g. after `source export.sh` in a parent shell that did not
-# export the derived PATH to sub-processes).
-if [ -z "${IDF_PATH:-}" ] || ! command -v idf.py >/dev/null 2>&1; then
-    # shellcheck disable=SC1091
-    source "${IDF_PATH:-$HOME/esp-idf}/export.sh" > /dev/null 2>&1
+# ---------------------------------------------------------------------------
+# 3. (Re)generate qemu_flash.bin if missing or stale.
+# ---------------------------------------------------------------------------
+if [ ! -f build/qemu_flash.bin ] || [ build/esp32-display-qemu-demo.bin -nt build/qemu_flash.bin ]; then
+    echo "[run-qemu] Regenerating qemu_flash.bin..."
+    IDF_PYTHON="$(find "$HOME/.espressif/python_env" -name python -path '*/idf5.5*/bin/python' 2>/dev/null | head -1 || true)"
+    [ -z "${IDF_PYTHON:-}" ] && IDF_PYTHON="python3"
+    (cd build && "$IDF_PYTHON" -m esptool --chip=esp32 merge_bin \
+        --output=qemu_flash.bin --fill-flash-size=2MB @flash_args 2>&1 | tail -2)
 fi
 
-echo "[run-qemu] Booting QEMU for ${DURATION}s, log -> ${LOG_FILE}"
-# idf.py needs the ESP-IDF python (with `click` etc.); a project .venv on PATH
-# shadows it. Strip the venv so the IDF environment wins.
-if [ -n "${VIRTUAL_ENV:-}" ]; then
-    PATH="$(echo "$PATH" | tr ':' '\n' | grep -vF "$VIRTUAL_ENV/bin" | paste -sd: -)"
-    export PATH
-    unset VIRTUAL_ENV PYTHONHOME 2>/dev/null || true
+# ---------------------------------------------------------------------------
+# 4. Generate qemu_efuse.bin if missing (124-byte default for ESP32 rev3).
+# ---------------------------------------------------------------------------
+if [ ! -f build/qemu_efuse.bin ]; then
+    echo "[run-qemu] Generating default qemu_efuse.bin..."
+    python3 -c "
+import struct, sys
+buf = bytearray(124)
+buf[0x0d] = 0x80  # WR_DIS bit for chip rev
+buf[0x11] = 0x10  # chip revision = 3
+open('build/qemu_efuse.bin','wb').write(buf)
+"
 fi
-# `idf.py qemu` (no --graphics) runs headless; serial output goes to stdio.
-QEMU_CMD="idf.py qemu --qemu-extra-args=-nographic"
-if command -v gtimeout >/dev/null 2>&1; then
-    # -k 5: escalate to SIGKILL 5s after SIGTERM. Required on Linux where
-    # QEMU's monitor on -serial mon:stdio absorbs SIGTERM and otherwise
-    # never exits.
-    gtimeout --foreground -k 5 "${DURATION}" $QEMU_CMD 2>&1 | tee "$LOG_FILE" || true
-elif command -v timeout >/dev/null 2>&1; then
-    timeout --foreground -k 5 "${DURATION}" $QEMU_CMD 2>&1 | tee "$LOG_FILE" || true
+
+# ---------------------------------------------------------------------------
+# 5. Boot QEMU directly (no idf.py rebuild overhead).
+# ---------------------------------------------------------------------------
+echo "[run-qemu] Booting QEMU for ${DURATION}s, log -> ${LOG_FILE}"
+# Clear any stale log so each run produces a clean, single-session file.
+: > "${LOG_FILE}"
+
+FLASH_BIN="${PROJECT_DIR}/build/qemu_flash.bin"
+EFUSE_BIN="${PROJECT_DIR}/build/qemu_efuse.bin"
+
+run_qemu() {
+    "${QEMU_BIN}" \
+        -M esp32 -m 4M \
+        -drive "file=${FLASH_BIN},if=mtd,format=raw" \
+        -drive "file=${EFUSE_BIN},if=none,format=raw,id=efuse" \
+        -global driver=nvram.esp32.efuse,property=drive,value=efuse \
+        -global driver=timer.esp32.timg,property=wdt_disable,value=true \
+        -nic user,model=open_eth \
+        -nographic -serial mon:stdio \
+        "$@" 2>&1 | tee "$LOG_FILE" || true
+}
+
+if command -v timeout >/dev/null 2>&1; then
+    # timeout wraps the entire qemu+tee pipeline; -k 5 force-kills stragglers.
+    timeout --foreground -k 5 "${DURATION}" \
+        bash -c '"$1" -M esp32 -m 4M \
+            -drive "file=$2,if=mtd,format=raw" \
+            -drive "file=$3,if=none,format=raw,id=efuse" \
+            -global driver=nvram.esp32.efuse,property=drive,value=efuse \
+            -global driver=timer.esp32.timg,property=wdt_disable,value=true \
+            -nic user,model=open_eth \
+            -nographic -serial mon:stdio 2>&1 | tee "$4"' \
+        _ "${QEMU_BIN}" "${FLASH_BIN}" "${EFUSE_BIN}" "${LOG_FILE}" || true
 else
-    : > "$LOG_FILE"
-    $QEMU_CMD > "$LOG_FILE" 2>&1 &
+    run_qemu &
     QEMU_PID=$!
     sleep "${DURATION}"
     kill "$QEMU_PID" 2>/dev/null || true
     sleep 1
     kill -9 "$QEMU_PID" 2>/dev/null || true
-    QPIDS=$(ps -o pid= -o comm= | awk '/qemu-system-xtensa/ {print $1}')
-    [ -n "$QPIDS" ] && kill $QPIDS 2>/dev/null || true
+    pkill -9 -f qemu-system-xtensa 2>/dev/null || true
     wait "$QEMU_PID" 2>/dev/null || true
 fi
 
