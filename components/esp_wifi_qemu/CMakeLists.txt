@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "esp_wifi_shim.c" "esp_wifi_config.c" "esp_wifi_scan.c"
+    SRCS "esp_wifi_shim.c" "esp_wifi_config.c" "esp_wifi_scan.c" "esp_wifi_netif.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES esp_wifi esp_event esp_netif nvs_flash freertos log

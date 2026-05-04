@@ -1,13 +1,11 @@
 # Example defaults for QEMU Wi-Fi station test
-# Enables the QEMU virtual Wi-Fi driver, disables AP mode
-
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 CONFIG_ESP_WIFI_QEMU=y
 
-# Set to your SSID and password (or override via menuconfig)
+# Credentials — override via menuconfig or QEMU_SSID / QEMU_PASS env vars
 CONFIG_ESP_WIFI_SSID="QEMU_TEST"
-CONFIG_ESP_WIFI_PASSWORD=""
+CONFIG_ESP_WIFI_PASSWORD="qemu1234"
 CONFIG_ESP_MAXIMUM_RETRY=5
 
-# Target
-CONFIG_IDF_TARGET="esp32"
+# WPA3/SAE mode required by app_main.c preprocessor guards
+CONFIG_ESP_STATION_EXAMPLE_WPA3_SAE_PWE_HUNT_AND_PECK=y

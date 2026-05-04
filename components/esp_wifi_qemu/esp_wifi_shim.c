@@ -26,6 +26,10 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
+/* Forward declarations from esp_wifi_netif.c */
+esp_err_t esp_wifi_netif_init(esp_netif_t *netif);
+void      esp_wifi_netif_rx_frame(void);
+
 static const char *TAG = "wifi_qemu";
 
 /* ------------------------------------------------------------------ */
@@ -96,7 +100,11 @@ static void wifi_event_task(void *arg)
     for (;;) {
         uint32_t evt = wifi_qemu_read(WIFI_REG_EVENT);
         if (evt == WIFI_EVT_NONE) {
-            vTaskDelay(pdMS_TO_TICKS(50));
+            /* Also fast-path poll for RX frames even without explicit event */
+            if (wifi_qemu_read(WIFI_REG_RX_LEN) > 0) {
+                esp_wifi_netif_rx_frame();
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
         wifi_qemu_write(WIFI_REG_EVENT, 0); /* ACK */
@@ -130,6 +138,9 @@ static void wifi_event_task(void *arg)
                 ip_info.netmask.addr = mask;
                 ip_info.gw.addr      = gw;
                 esp_netif_set_ip_info(s_sta_netif, &ip_info);
+
+                /* Install QEMU packet driver now that we have the netif */
+                esp_wifi_netif_init(s_sta_netif);
             }
 
             ip_event_got_ip_t got_ip = {
@@ -167,6 +178,10 @@ static void wifi_event_task(void *arg)
         }
         case WIFI_EVT_ERROR:
             ESP_LOGE(TAG, "device error event");
+            break;
+        case WIFI_EVT_RX_READY:
+            /* RX Ethernet frame ready in MMIO buffer — inject into lwIP */
+            esp_wifi_netif_rx_frame();
             break;
         default:
             /* INIT_DONE, START_DONE, STOP_DONE handled by wifi_qemu_send_cmd */

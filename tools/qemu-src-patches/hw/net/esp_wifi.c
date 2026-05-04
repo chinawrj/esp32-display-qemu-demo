@@ -22,6 +22,8 @@
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
 #include "hw/net/esp_wifi.h"
+#include "exec/memory.h"    /* cpu_physical_memory_read / cpu_physical_memory_write */
+#include "exec/address-spaces.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -387,7 +389,207 @@ static void wpa_ctrl_close(ESPWifiState *s)
     s->conn_state = WPA_CONN_NONE;
 }
 
-/* ---------- Command dispatch ---------------------------------------------- */
+/* ---------- Packet relay socket (NEXT-003: TCP/IP data plane) ------------- */
+
+/*
+ * Protocol: length-prefixed Ethernet frames over a Unix STREAM socket.
+ * Each frame is preceded by a 4-byte big-endian length field.
+ * Maximum frame size: WIFI_PKT_BUF_SIZE (1516 bytes).
+ */
+
+static gboolean esp_wifi_pkt_read_cb(GIOChannel *chan,
+                                     GIOCondition cond,
+                                     gpointer data);
+
+static void pkt_relay_close(ESPWifiState *s)
+{
+    if (s->pkt_watch) {
+        g_source_remove(s->pkt_watch);
+        s->pkt_watch = 0;
+    }
+    if (s->pkt_chan) {
+        g_io_channel_shutdown(s->pkt_chan, FALSE, NULL);
+        g_io_channel_unref(s->pkt_chan);
+        s->pkt_chan = NULL;
+    }
+    if (s->pkt_fd >= 0) {
+        close(s->pkt_fd);
+        s->pkt_fd = -1;
+    }
+    s->pkt_rx_hdr_pos    = 0;
+    s->pkt_rx_data_pos   = 0;
+    s->pkt_rx_expected   = 0;
+}
+
+static void pkt_relay_open(ESPWifiState *s)
+{
+    const char *path = getenv("ESP_WIFI_PKT_SOCKET");
+    if (!path || !path[0]) {
+        /* Packet relay not configured — data-plane silently disabled */
+        return;
+    }
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        warn_report("[ESP WIFI PKT] socket(): %s", strerror(errno));
+        return;
+    }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        warn_report("[ESP WIFI PKT] connect(%s): %s", path, strerror(errno));
+        close(fd);
+        return;
+    }
+
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    s->pkt_fd   = fd;
+    s->pkt_chan = g_io_channel_unix_new(fd);
+    g_io_channel_set_encoding(s->pkt_chan, NULL, NULL);
+    g_io_channel_set_buffered(s->pkt_chan, FALSE);
+
+    s->pkt_watch = g_io_add_watch(
+        s->pkt_chan,
+        G_IO_IN | G_IO_HUP | G_IO_ERR,
+        esp_wifi_pkt_read_cb,
+        s);
+
+    info_report("[ESP WIFI PKT] connected to relay socket %s", path);
+}
+
+/**
+ * Send a TX Ethernet frame to the relay daemon (4-byte BE length prefix + data).
+ */
+static void pkt_relay_send(ESPWifiState *s, const uint8_t *buf, uint32_t len)
+{
+    if (s->pkt_fd < 0 || len == 0 || len > WIFI_PKT_BUF_SIZE) {
+        return;
+    }
+
+    uint8_t hdr[4];
+    hdr[0] = (len >> 24) & 0xff;
+    hdr[1] = (len >> 16) & 0xff;
+    hdr[2] = (len >>  8) & 0xff;
+    hdr[3] = (len      ) & 0xff;
+
+    /* Best-effort blocking write; relay daemon must drain fast enough */
+    ssize_t r = send(s->pkt_fd, hdr, 4, MSG_NOSIGNAL | MSG_MORE);
+    if (r != 4) {
+#if WIFI_WARN
+        warn_report("[ESP WIFI PKT] send header failed: %s", strerror(errno));
+#endif
+        pkt_relay_close(s);
+        return;
+    }
+    r = send(s->pkt_fd, buf, len, MSG_NOSIGNAL);
+    if (r != (ssize_t)len) {
+#if WIFI_WARN
+        warn_report("[ESP WIFI PKT] send data failed: %s", strerror(errno));
+#endif
+        pkt_relay_close(s);
+    }
+}
+
+/**
+ * GIO callback: incoming data from relay daemon → RX buffer → EVT_RX_READY.
+ * Uses a state machine to handle partial reads.
+ */
+static gboolean esp_wifi_pkt_read_cb(GIOChannel *chan,
+                                     GIOCondition cond,
+                                     gpointer data)
+{
+    ESPWifiState *s = ESP_WIFI(data);
+
+    if (cond & (G_IO_HUP | G_IO_ERR)) {
+#if WIFI_WARN
+        warn_report("[ESP WIFI PKT] relay socket HUP/ERR");
+#endif
+        pkt_relay_close(s);
+        return FALSE;
+    }
+
+    int fd = g_io_channel_unix_get_fd(chan);
+
+    while (1) {
+        if (s->pkt_rx_hdr_pos < 4) {
+            /* Still reading the 4-byte length prefix */
+            ssize_t n = recv(fd,
+                             s->pkt_rx_hdr + s->pkt_rx_hdr_pos,
+                             4 - s->pkt_rx_hdr_pos,
+                             0);
+            if (n <= 0) {
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    break; /* no more data */
+                }
+                pkt_relay_close(s);
+                return FALSE;
+            }
+            s->pkt_rx_hdr_pos += (int)n;
+            if (s->pkt_rx_hdr_pos < 4) {
+                break; /* header incomplete */
+            }
+            /* Decode length */
+            s->pkt_rx_expected = ((int)s->pkt_rx_hdr[0] << 24) |
+                                 ((int)s->pkt_rx_hdr[1] << 16) |
+                                 ((int)s->pkt_rx_hdr[2] <<  8) |
+                                  (int)s->pkt_rx_hdr[3];
+            if (s->pkt_rx_expected <= 0 ||
+                s->pkt_rx_expected > WIFI_PKT_BUF_SIZE) {
+#if WIFI_WARN
+                warn_report("[ESP WIFI PKT] bad frame len %d from relay",
+                            s->pkt_rx_expected);
+#endif
+                pkt_relay_close(s);
+                return FALSE;
+            }
+            s->pkt_rx_data_pos = 0;
+        }
+
+        /* Reading frame body */
+        int remaining = s->pkt_rx_expected - s->pkt_rx_data_pos;
+        ssize_t n = recv(fd,
+                         s->pkt_rx_data + s->pkt_rx_data_pos,
+                         remaining,
+                         0);
+        if (n <= 0) {
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                break;
+            }
+            pkt_relay_close(s);
+            return FALSE;
+        }
+        s->pkt_rx_data_pos += (int)n;
+
+        if (s->pkt_rx_data_pos < s->pkt_rx_expected) {
+            break; /* frame incomplete */
+        }
+
+        /* Full frame received — write directly to firmware's RX DMA buffer */
+        if (s->rx_len == 0 && s->rx_addr != 0) {
+            if (s->pkt_rx_expected <= WIFI_PKT_BUF_SIZE) {
+                cpu_physical_memory_write(s->rx_addr,
+                                         s->pkt_rx_data,
+                                         s->pkt_rx_expected);
+                s->rx_len = (uint32_t)s->pkt_rx_expected;
+                esp_wifi_post_event(s, WIFI_EVT_RX_READY);
+            }
+        }
+        /* else: drop frame (firmware hasn't consumed previous frame yet) */
+
+        /* Reset for next frame */
+        s->pkt_rx_hdr_pos  = 0;
+        s->pkt_rx_data_pos = 0;
+        s->pkt_rx_expected = 0;
+    }
+
+    return TRUE;
+}
 
 static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
 {
@@ -433,6 +635,10 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
         if (s->status == WIFI_STATE_STARTED) {
             s->conn_state = WPA_CONN_SCAN_SENT;
             wpa_ctrl_send(s, "SCAN");
+            /* Also open packet relay if not already open */
+            if (s->pkt_fd < 0) {
+                pkt_relay_open(s);
+            }
         } else {
 #if WIFI_WARN
             warn_report("[ESP WIFI] CMD_CONNECT in invalid state %u", s->status);
@@ -535,6 +741,8 @@ static uint64_t esp_wifi_read(void *opaque, hwaddr addr, unsigned int size)
         return r;
     }
 
+    /* --- Packet DMA registers (no large MMIO buffers) --- */
+
     switch (addr) {
     case WIFI_REG_VER:
         r = ((uint32_t)ESP_WIFI_VERSION_MAJOR << 16) | ESP_WIFI_VERSION_MINOR;
@@ -576,6 +784,10 @@ static uint64_t esp_wifi_read(void *opaque, hwaddr addr, unsigned int size)
         }
         break;
     case WIFI_REG_CTRL_SOCK_LEN: r = s->ctrl_sock_path_len; break;
+    case WIFI_REG_TX_ADDR: r = s->tx_addr; break;
+    case WIFI_REG_TX_LEN:  r = s->tx_len;  break;
+    case WIFI_REG_RX_ADDR: r = s->rx_addr; break;
+    case WIFI_REG_RX_LEN:  r = s->rx_len;  break;
     default:
 #if WIFI_WARN
         warn_report("[ESP WIFI] unhandled read 0x%" HWADDR_PRIx, addr);
@@ -613,6 +825,8 @@ static void esp_wifi_write(void *opaque, hwaddr addr,
         return;
     }
 
+    /* --- Packet DMA write registers --- */
+
     switch (addr) {
     case WIFI_REG_CMD:
         if (v != 0) { esp_wifi_handle_cmd(s, v); }
@@ -635,6 +849,27 @@ static void esp_wifi_write(void *opaque, hwaddr addr,
         break;
     case WIFI_REG_CTRL_SOCK_LEN:
         s->ctrl_sock_path_len = (uint8_t)(v & 0x7f);
+        break;
+    case WIFI_REG_TX_ADDR:
+        s->tx_addr = v;
+        break;
+    case WIFI_REG_TX_LEN:
+        if (v > 0 && v <= WIFI_PKT_BUF_SIZE && s->tx_addr != 0) {
+            /* Read frame from firmware's DRAM buffer via DMA */
+            uint8_t dma_buf[WIFI_PKT_BUF_SIZE];
+            cpu_physical_memory_read(s->tx_addr, dma_buf, v);
+            pkt_relay_send(s, dma_buf, v);
+            s->tx_len = 0; /* idle */
+        }
+        break;
+    case WIFI_REG_RX_ADDR:
+        s->rx_addr = v;
+        break;
+    case WIFI_REG_RX_LEN:
+        if (v == 0) {
+            /* Firmware consumed the RX frame */
+            s->rx_len = 0;
+        }
         break;
     default:
 #if WIFI_WARN
@@ -663,6 +898,7 @@ static void esp_wifi_reset(DeviceState *dev)
 {
     ESPWifiState *s = ESP_WIFI(dev);
     wpa_ctrl_close(s);
+    pkt_relay_close(s);
 
     s->status             = WIFI_STATE_UNINIT;
     s->event              = WIFI_EVT_NONE;
@@ -677,6 +913,8 @@ static void esp_wifi_reset(DeviceState *dev)
     s->ctrl_sock_path_len = 0;
     s->net_id             = -1;
     s->conn_state         = WPA_CONN_NONE;
+    s->tx_len             = 0;
+    s->rx_len             = 0;
 
     memset(s->ssid,           0, sizeof(s->ssid));
     memset(s->pass,           0, sizeof(s->pass));
@@ -702,6 +940,18 @@ static void esp_wifi_realize(DeviceState *dev, Error **errp)
     s->ctrl_watch = 0;
     s->net_id     = -1;
     s->conn_state = WPA_CONN_NONE;
+
+    /* Packet relay init */
+    s->pkt_fd          = -1;
+    s->pkt_chan         = NULL;
+    s->pkt_watch        = 0;
+    s->tx_addr          = 0;
+    s->tx_len           = 0;
+    s->rx_addr          = 0;
+    s->rx_len           = 0;
+    s->pkt_rx_hdr_pos   = 0;
+    s->pkt_rx_data_pos  = 0;
+    s->pkt_rx_expected  = 0;
 }
 
 /* ---------- Class / type registration ------------------------------------- */

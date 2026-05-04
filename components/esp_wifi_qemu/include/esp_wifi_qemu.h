@@ -38,6 +38,18 @@
 #define WIFI_REG_CTRL_SOCK_LEN  0x0d0  /**< ctrl socket path length           */
 #define WIFI_REG_CTRL_SOCK_BASE 0x0d4  /**< ctrl socket path bytes (64 bytes) */
 
+/* --- Packet data-plane registers (NEXT-003: TCP/IP DMA forwarding) --------- */
+/* DMA design: firmware allocates static DRAM buffers and registers their      */
+/* physical addresses via these registers. QEMU reads/writes guest memory      */
+/* directly (cpu_physical_memory_read/write), avoiding MMIO address conflicts  */
+/* with the RNG device at DR_REG_WDEV_BASE+0x144.                              */
+#define WIFI_REG_TX_ADDR        0x114  /**< Write guest-physical addr of TX buffer before TX_LEN */
+#define WIFI_REG_TX_LEN         0x118  /**< Write Ethernet frame length (1–1514 bytes) to trigger TX */
+#define WIFI_REG_RX_ADDR        0x11c  /**< Write guest-physical addr of RX buffer (once at init) */
+#define WIFI_REG_RX_LEN         0x120  /**< Non-zero = RX frame ready; write 0 to consume */
+/* IO range 0x000–0x123 is safe: RNG device lives at +0x144, never conflicts */
+#define WIFI_PKT_BUF_SIZE       1516   /**< Max Ethernet frame bytes (handles 1514) */
+
 /* ---------- Command codes (write to WIFI_REG_CMD) -------------------------- */
 #define WIFI_CMD_INIT           0x01
 #define WIFI_CMD_DEINIT         0x02
@@ -60,6 +72,7 @@
 #define WIFI_EVT_GOT_IP         0x07
 #define WIFI_EVT_SCAN_DONE      0x08
 #define WIFI_EVT_ERROR          0x09
+#define WIFI_EVT_RX_READY       0x0a   /**< RX Ethernet frame available in RX_BUF */
 
 /* ---------- State codes (read from WIFI_REG_STATUS) ------------------------ */
 #define WIFI_STATE_UNINIT       0x00

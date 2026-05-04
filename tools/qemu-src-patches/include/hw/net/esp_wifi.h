@@ -25,7 +25,12 @@
 #define ESP_WIFI_VERSION_MINOR  0
 
 /* ---------- MMIO size ----------------------------------------------------- */
-#define ESP_WIFI_IO_SIZE        0x120   /* covers all registers in the spec */
+/* 0x124 bytes: covers all control regs + 4 DMA pointer regs.                */
+/* MUST stay < 0x144 to avoid overlapping the RNG device at WDEV_BASE+0x144. */
+#define ESP_WIFI_IO_SIZE        0x124
+
+/* ---------- Packet buffer size (DMA transfer, no MMIO buffer needed) ------- */
+#define WIFI_PKT_BUF_SIZE       1516    /* handles Ethernet max 1514 bytes   */
 
 /* ---------- Register offsets (must match docs/qemu-wifi.md §2) ------------ */
 #define WIFI_REG_VER            0x000
@@ -52,6 +57,16 @@
 #define WIFI_REG_CTRL_SOCK_LEN  0x0d0
 #define WIFI_REG_CTRL_SOCK_BASE 0x0d4   /* 64 bytes, 16 regs */
 
+/* --- Packet data-plane registers (NEXT-003: TCP/IP DMA forwarding) --------- */
+/* DMA design: firmware allocates DRAM buffers and registers their physical   */
+/* addresses here.  QEMU calls cpu_physical_memory_read/write to access them. */
+/* This avoids any MMIO address conflict with the RNG device at +0x144.       */
+#define WIFI_REG_TX_ADDR        0x114   /* u32: guest-physical addr of TX buf */
+#define WIFI_REG_TX_LEN         0x118   /* u32: write frame len to trigger TX; 0=idle */
+#define WIFI_REG_RX_ADDR        0x11c   /* u32: guest-physical addr of RX buf */
+#define WIFI_REG_RX_LEN         0x120   /* u32: non-zero = frame ready; write 0 to consume */
+/* Range 0x000–0x123 ✓  RNG lives at +0x144, safely out of our MMIO region */
+
 /* ---------- Command codes (write to WIFI_REG_CMD) ------------------------- */
 #define WIFI_CMD_INIT           0x01
 #define WIFI_CMD_DEINIT         0x02
@@ -74,6 +89,7 @@
 #define WIFI_EVT_GOT_IP         0x07
 #define WIFI_EVT_SCAN_DONE      0x08
 #define WIFI_EVT_ERROR          0x09
+#define WIFI_EVT_RX_READY       0x0a    /* RX packet available in RX_BUF     */
 
 /* ---------- State codes (WIFI_REG_STATUS) --------------------------------- */
 #define WIFI_STATE_UNINIT       0x00
@@ -128,6 +144,24 @@ typedef struct ESPWifiState {
     guint       ctrl_watch;         /**< g_io_add_watch source tag */
     int         net_id;             /**< ADD_NETWORK id returned by wpa_supplicant */
     int         conn_state;         /**< WpaConnState (see below) */
+
+    /* --- Packet relay socket (NEXT-003: TCP/IP data plane) --- */
+    int         pkt_fd;             /**< Unix STREAM relay socket, -1 = closed */
+    GIOChannel *pkt_chan;           /**< GLib I/O channel wrapping pkt_fd */
+    guint       pkt_watch;          /**< g_io_add_watch source tag */
+
+    /* --- DMA packet registers (firmware writes guest-physical addrs here) --- */
+    uint32_t    tx_addr;            /**< guest-physical addr of firmware TX buf */
+    uint32_t    tx_len;             /**< 0 = idle; non-zero triggers TX via DMA */
+    uint32_t    rx_addr;            /**< guest-physical addr of firmware RX buf */
+    uint32_t    rx_len;             /**< 0 = consumed; non-zero = frame ready   */
+
+    /* --- Host-side relay receive accumulation buffer --- */
+    uint8_t     pkt_rx_hdr[4];      /**< length prefix accumulator (4 bytes) */
+    int         pkt_rx_hdr_pos;     /**< bytes received into pkt_rx_hdr      */
+    uint8_t     pkt_rx_data[WIFI_PKT_BUF_SIZE]; /**< partial frame data      */
+    int         pkt_rx_data_pos;    /**< bytes received into pkt_rx_data      */
+    int         pkt_rx_expected;    /**< total frame bytes expected           */
 } ESPWifiState;
 
 /* ---------- wpa_supplicant connection-sequencing state -------------------- */
