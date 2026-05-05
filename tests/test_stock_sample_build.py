@@ -68,6 +68,7 @@ def test_cmake_lists_all_source_files():
         "esp_wifi_netif.c",
         "esp_wifi_extras.c",
         "esp_wifi_internal.c",
+        "esp_wifi_ap.c",
     ]
     for src in expected_sources:
         assert src in content, f"Expected {src} in CMakeLists.txt SRCS"

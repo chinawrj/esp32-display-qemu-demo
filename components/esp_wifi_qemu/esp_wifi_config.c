@@ -19,13 +19,22 @@
 
 static const char *TAG = "wifi_qemu";
 
+/* AP configuration — written by esp_wifi_set_config(WIFI_IF_AP, ...) */
+static wifi_config_t s_ap_cfg = {};
+
 esp_err_t esp_wifi_set_config(wifi_interface_t interface, wifi_config_t *conf)
 {
-    if (interface != WIFI_IF_STA) {
-        return ESP_ERR_NOT_SUPPORTED;
-    }
     if (!conf) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (interface == WIFI_IF_AP) {
+        memcpy(&s_ap_cfg, conf, sizeof(wifi_config_t));
+        ESP_LOGD(TAG, "set_config AP SSID=%s channel=%d",
+                 s_ap_cfg.ap.ssid, s_ap_cfg.ap.channel);
+        return ESP_OK;
+    }
+    if (interface != WIFI_IF_STA) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
     memcpy(&s_sta_cfg, conf, sizeof(wifi_config_t));
 
@@ -54,7 +63,14 @@ esp_err_t esp_wifi_set_config(wifi_interface_t interface, wifi_config_t *conf)
 
 esp_err_t esp_wifi_get_config(wifi_interface_t interface, wifi_config_t *conf)
 {
-    if (interface != WIFI_IF_STA || !conf) {
+    if (!conf) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (interface == WIFI_IF_AP) {
+        memcpy(conf, &s_ap_cfg, sizeof(wifi_config_t));
+        return ESP_OK;
+    }
+    if (interface != WIFI_IF_STA) {
         return ESP_ERR_INVALID_ARG;
     }
     memcpy(conf, &s_sta_cfg, sizeof(wifi_config_t));
@@ -80,7 +96,20 @@ esp_err_t esp_wifi_disconnect(void)
 
 esp_err_t esp_wifi_get_mac(wifi_interface_t ifx, uint8_t mac[6])
 {
-    if (ifx != WIFI_IF_STA || !mac) {
+    if (!mac) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (ifx == WIFI_IF_AP) {
+        /* AP MAC = STA MAC with last byte incremented by 1 */
+        wifi_qemu_send_cmd(WIFI_CMD_GET_MAC, 1000);
+        uint32_t mac0 = wifi_qemu_read(WIFI_REG_MAC0);
+        uint32_t mac1 = wifi_qemu_read(WIFI_REG_MAC1);
+        memcpy(mac, &mac0, 4);
+        mac[4] = (uint8_t)((mac1 >> 24) & 0xff);
+        mac[5] = (uint8_t)(((mac1 >> 16) & 0xff) + 1);
+        return ESP_OK;
+    }
+    if (ifx != WIFI_IF_STA) {
         return ESP_ERR_INVALID_ARG;
     }
     wifi_qemu_send_cmd(WIFI_CMD_GET_MAC, 1000);

@@ -244,12 +244,8 @@ esp_err_t esp_wifi_deinit(void)
 
 esp_err_t esp_wifi_set_mode(wifi_mode_t mode)
 {
-    if (mode != WIFI_MODE_STA && mode != WIFI_MODE_NULL) {
-        ESP_LOGE(TAG, "only STA mode supported in QEMU (requested %d)", mode);
-        return ESP_ERR_NOT_SUPPORTED;
-    }
     s_mode = mode;
-    if (mode == WIFI_MODE_STA) {
+    if (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA) {
         return wifi_qemu_send_cmd(WIFI_CMD_SET_MODE_STA, 1000);
     }
     return ESP_OK;
@@ -266,7 +262,13 @@ esp_err_t esp_wifi_get_mode(wifi_mode_t *mode)
 
 esp_err_t esp_wifi_start(void)
 {
-    ESP_LOGI(TAG, "start");
+    ESP_LOGI(TAG, "start (mode=%d)", (int)s_mode);
+    if (s_mode == WIFI_MODE_AP) {
+        /* AP-mode start is handled locally: no QEMU device involvement. */
+        esp_event_post(WIFI_EVENT, WIFI_EVENT_AP_START, NULL, 0,
+                       portMAX_DELAY);
+        return ESP_OK;
+    }
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 500);
     if (ret == ESP_OK) {
         /* BUG-002 fix: pre-register RX DMA buffer so QEMU can deliver ARP
@@ -280,7 +282,12 @@ esp_err_t esp_wifi_start(void)
 
 esp_err_t esp_wifi_stop(void)
 {
-    ESP_LOGI(TAG, "stop");
+    ESP_LOGI(TAG, "stop (mode=%d)", (int)s_mode);
+    if (s_mode == WIFI_MODE_AP) {
+        esp_event_post(WIFI_EVENT, WIFI_EVENT_AP_STOP, NULL, 0,
+                       portMAX_DELAY);
+        return ESP_OK;
+    }
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_STOP, 3000);
     if (ret == ESP_OK) {
         esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_STOP, NULL, 0,
