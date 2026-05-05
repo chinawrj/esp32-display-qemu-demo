@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# tools/run-direct-demo.sh — QEMU-native WebSocket framebuffer viewer (NEXT-001).
+# tools/run-direct-demo.sh — QEMU-native WebSocket framebuffer viewer (NEXT-001/003).
 #
 # Boots the patched QEMU binary that includes the built-in esp_rgb WebSocket
 # server.  The firmware's LVGL output is streamed directly from the QEMU
 # device to the browser via ws://127.0.0.1:$PORT/ — no host-side fb_server
 # or shared memory file required.
 #
+# Also starts mock_wpa_supplicant so the integrated Wi-Fi demo shows
+# "got ip:192.168.1.100" in the LVGL label (NEXT-003).
+#
 # Usage:
 #   bash tools/run-direct-demo.sh                    # open browser automatically
 #   bash tools/run-direct-demo.sh --no-browser       # just start QEMU + print URL
 #   bash tools/run-direct-demo.sh --port 9334        # override WS port (default: 9334)
 #   bash tools/run-direct-demo.sh --duration 60      # auto-stop after 60 s
+#   bash tools/run-direct-demo.sh --no-wifi          # skip mock Wi-Fi daemon
 #
 # Environment overrides:
-#   QEMU_BIN          path to qemu-system-xtensa (default: tools/qemu-src/build/...)
-#   ESP_RGB_WS_PORT   WebSocket port (default: 9334)
-#   HTTP_PORT         HTTP port for serving web/ (default: 8090)
+#   QEMU_BIN              path to qemu-system-xtensa (default: tools/qemu-src/build/...)
+#   ESP_RGB_WS_PORT       WebSocket port (default: 9334)
+#   HTTP_PORT             HTTP port for serving web/ (default: 8090)
+#   WIFI_CTRL_SOCKET      mock wpa_supplicant socket path (default: /tmp/mock-wpa-demo)
+#   MOCK_WIFI_IP          IP the mock AP assigns to firmware (default: 192.168.1.100)
 
 set -euo pipefail
 
@@ -27,15 +33,17 @@ cd "$PROJECT_DIR"
 # ---------------------------------------------------------------------------
 MODE="browser"
 DURATION=""
+ENABLE_WIFI="1"
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-browser) MODE="no-browser" ;;
+        --no-wifi)    ENABLE_WIFI="0" ;;
         --port)       shift; ESP_RGB_WS_PORT="${1:-9334}" ;;
         --port=*)     ESP_RGB_WS_PORT="${1#--port=}" ;;
         --duration)   shift; DURATION="${1:-}" ;;
         --duration=*) DURATION="${1#--duration=}" ;;
         -h|--help)
-            sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) echo "[run-direct-demo] unknown arg: $1" >&2; exit 1 ;;
@@ -45,6 +53,8 @@ done
 
 WS_PORT="${ESP_RGB_WS_PORT:-9334}"
 HTTP_PORT="${HTTP_PORT:-8090}"
+MOCK_SOCKET="${WIFI_CTRL_SOCKET:-/tmp/mock-wpa-demo}"
+MOCK_IP="${MOCK_WIFI_IP:-192.168.1.100}"
 
 # ---------------------------------------------------------------------------
 # Locate QEMU binary and firmware
@@ -69,10 +79,16 @@ fi
 # ---------------------------------------------------------------------------
 QEMU_PID=""
 HTTP_PID=""
+MOCK_WPA_PID=""
 
 cleanup() {
     local rc=$?
     set +e
+    if [ -n "$MOCK_WPA_PID" ] && kill -0 "$MOCK_WPA_PID" 2>/dev/null; then
+        echo "[run-direct-demo] stopping mock-wpa-supplicant (pid=$MOCK_WPA_PID)"
+        kill "$MOCK_WPA_PID" 2>/dev/null
+        wait "$MOCK_WPA_PID" 2>/dev/null
+    fi
     if [ -n "$HTTP_PID" ] && kill -0 "$HTTP_PID" 2>/dev/null; then
         echo "[run-direct-demo] stopping HTTP server (pid=$HTTP_PID)"
         kill "$HTTP_PID" 2>/dev/null
@@ -86,6 +102,37 @@ cleanup() {
     exit "$rc"
 }
 trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Start mock Wi-Fi daemon (NEXT-003: API-level Wi-Fi simulation)
+# Simulates wpa_supplicant ctrl socket so firmware gets 'got ip:' without
+# real hardware. Disabled with --no-wifi or if python3 unavailable.
+# ---------------------------------------------------------------------------
+if [ "$ENABLE_WIFI" = "1" ] && command -v python3 >/dev/null 2>&1; then
+    # Clean up stale socket
+    rm -f "$MOCK_SOCKET"
+    echo "[run-direct-demo] starting mock-wpa-supplicant (socket=$MOCK_SOCKET, ip=$MOCK_IP)..."
+    python3 "$PROJECT_DIR/tools/mock_wpa_supplicant.py" \
+        --ctrl-path "$MOCK_SOCKET" \
+        --ip "$MOCK_IP" \
+        --ssid "QEMU_TEST" \
+        </dev/null >/tmp/mock-wpa-demo.log 2>&1 &
+    MOCK_WPA_PID=$!
+    # Wait up to 2 s for socket to appear
+    for i in $(seq 1 20); do
+        [ -S "$MOCK_SOCKET" ] && break
+        sleep 0.1
+    done
+    if [ -S "$MOCK_SOCKET" ]; then
+        echo "[run-direct-demo] mock-wpa-supplicant ready."
+        export ESP_WIFI_CTRL_SOCKET="$MOCK_SOCKET"
+    else
+        echo "[run-direct-demo] WARN: mock-wpa socket did not appear; continuing without Wi-Fi mock." >&2
+        MOCK_WPA_PID=""
+    fi
+else
+    echo "[run-direct-demo] Wi-Fi mock disabled (--no-wifi or python3 unavailable)"
+fi
 
 # ---------------------------------------------------------------------------
 # Start QEMU (WebSocket listener on $WS_PORT)
@@ -132,11 +179,13 @@ sleep 0.3  # let the HTTP server bind
 PAGE_URL="http://127.0.0.1:${HTTP_PORT}/qemu-direct.html?port=${WS_PORT}"
 echo ""
 echo "┌─────────────────────────────────────────────────────────────────┐"
-echo "│  QEMU-native WebSocket canvas viewer (NEXT-001)                 │"
+echo "│  QEMU LVGL + Wi-Fi Integration Demo (NEXT-001/003)              │"
 echo "│                                                                  │"
 echo "│  Open in Chrome:  $PAGE_URL"
 echo "│                                                                  │"
-echo "│  LVGL content appears ~3 s after boot.  Ctrl-C to stop.         │"
+echo "│  LVGL content appears ~3 s after boot.                          │"
+echo "│  Wi-Fi label updates to 'got ip:$MOCK_IP' ~15 s.  │"
+echo "│  Ctrl-C to stop.                                                 │"
 echo "└─────────────────────────────────────────────────────────────────┘"
 echo ""
 

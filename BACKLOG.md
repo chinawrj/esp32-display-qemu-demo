@@ -355,7 +355,15 @@ API 兼容性覆盖范围（STA 阶段最低要求）：
 
 ## NEXT-003 — LVGL + Wi-Fi 集成 Demo（QEMU 无硬件全流程验证）
 
-**Status:** 🔲 **NOT STARTED** (blocked on NEXT-003 TCP/IP data plane — ✅ completed Day 14)
+**Status:** ✅ **DONE** (Days 15–16, Linux).  
+**Completed:** 2026-05-05.  73 passed (65 non-QEMU-runtime + 8 new source checks), 0 failed.  
+**Key commits:** a80240c (Day 15 LVGL+Wi-Fi firmware), Day 16 log + test + run-direct-demo.sh.
+
+### Design note: API-level simulation
+The `esp_wifi_qemu` component simulates the *public `esp_wifi_*` API*, not the
+ESP32 hardware register map. The MMIO registers in `esp_wifi_qemu.h` are a custom
+firmware↔QEMU communication channel constrained to offsets `< 0x144` to avoid the
+RNG device. Tests validate at the API/event level (`got ip:` in serial log).
 
 ### Problem
 
