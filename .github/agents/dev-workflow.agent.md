@@ -7,6 +7,47 @@ description: "esp32-display-qemu-demo 开发工作流 Agent - 驱动每日迭代
 
 你是 **esp32-display-qemu-demo** 项目的开发工作流 Agent。你的职责是驱动项目的每日迭代开发，确保项目按计划推进并最终完成。
 
+## ★★★ 北极星目标 (PRIMARY TARGET) — 经理直接指令
+
+> **任何 ESP-IDF 官方 Wi-Fi 示例代码（`$IDF_PATH/examples/wifi/**` 及任何
+> 使用 `esp_wifi_*` / `esp_now_*` / `esp_netif_*` 的应用）必须无需修改任何
+> `.c` / `.h` 源代码即可在我们的 QEMU Wi-Fi 模拟器上运行。仅允许修改
+> `CMakeLists.txt` 和 `sdkconfig` 用于切换到 QEMU Wi-Fi 组件。**
+
+### 这是项目的总体方向
+
+每一项 BUG 修复、GAP 关闭、架构决策都必须问自己：
+**"这一步是否让我们更接近 stock 示例的 drop-in 兼容性？"**
+
+如果答案是"否"，重新评估优先级。详细的差距清单和路线图见
+`BACKLOG.md` 的 **PRIMARY-TARGET** 章节（位于文件最顶部）。
+
+### Phase-1 目标示例（按优先级）
+
+| P0 | `examples/wifi/getting_started/station/` |
+| P0 | `examples/wifi/scan/` |
+| P1 | `examples/wifi/getting_started/softAP/` |
+| P1 | `examples/protocols/sockets/tcp_client/` |
+| P1 | `examples/protocols/sockets/udp_client/` |
+| P2 | `examples/wifi/iperf/` · `power_save/` · `espnow/` |
+
+### 关键差距（stock 示例阻塞项）
+
+- **A**: `esp_wifi_*` API 表面缺口（约 25 个未覆盖符号）
+- **B**: AP / SoftAP 模式完全缺失
+- **C**: ESPNOW 完全缺失
+- **F**: `esp_netif_attach_wifi_station` 仅"凑巧"工作
+- **G**: 构建系统对接（无源码改动只允许 CMakeLists.txt + sdkconfig）
+- **I**: lwIP 数据面（无 DHCP 服务器、无 DNS、无 IPv6、无外网 NAT）
+
+### 每日规划必须包含的检查项
+
+1. 今日工作是否直接服务 PRIMARY TARGET？如果不是，是否在解锁路径上的依赖？
+2. 今日完成后，距离让某个 stock 示例 green-run 还差几步？
+3. 是否引入了"只对我们自己的 `main/wifi_ui.c` 有效"的 hack？— **禁止**
+
+---
+
 ## 项目信息
 
 - **项目名称**: esp32-display-qemu-demo
@@ -31,6 +72,15 @@ description: "esp32-display-qemu-demo 开发工作流 Agent - 驱动每日迭代
 - `esp-component-registry`: 搜索 ESP 组件注册表中的组件和示例代码
 
 ## 验收标准
+
+### 项目级（北极星 — 见上方 PRIMARY TARGET）
+
+- [ ] 至少 1 个 stock ESP-IDF Wi-Fi 示例（P0：station 或 scan）在 QEMU 中
+      drop-in 运行，源码 zero-diff，仅 CMakeLists.txt + sdkconfig 调整
+- [ ] `examples/wifi/getting_started/station/` 在 QEMU 中输出 `got ip:` 日志
+- [ ] 文档 `docs/qemu-wifi-stock-samples.md` 记录每个 stock 示例的运行步骤
+
+### 每日级
 
 - [ ] idf.py build 编译成功，零警告
 - [ ] QEMU 成功启动并输出 LVGL 初始化日志

@@ -8,6 +8,201 @@ The headline target is at the top.
 
 ---
 
+## ★★★ PRIMARY-TARGET — Drop-in ESP-IDF Wi-Fi sample compatibility
+
+**Status:** Planning. Manager directive (Day 22, 2026-05-05).
+
+### Mission statement
+
+> **Any Wi-Fi sample under `$IDF_PATH/examples/wifi/**` (and any application
+> that uses `esp_wifi_*` / `esp_now_*` / `esp_netif_*`) MUST run unmodified on
+> our QEMU Wi-Fi simulator. Only `CMakeLists.txt` / `sdkconfig` changes are
+> permitted to select the QEMU Wi-Fi component; NO `.c` / `.h` source code
+> changes are allowed.**
+
+This is the **north star** for every subsequent Wi-Fi work item. Every BUG
+fix, GAP closure, and architectural decision must be evaluated against
+"does this bring us closer to drop-in sample support?".
+
+### Acceptance criteria
+
+A given ESP-IDF Wi-Fi sample is considered "supported" when:
+
+- [ ] Sample's `main/*.c` and `main/*.h` are byte-identical to upstream.
+- [ ] Only `CMakeLists.txt` (project-level or main) and `sdkconfig.defaults`
+      may differ, and only to: (a) add `EXTRA_COMPONENT_DIRS` pointing at our
+      `components/` overlay, (b) enable `CONFIG_ESP_WIFI_QEMU=y`.
+- [ ] `idf.py build` succeeds with zero warnings.
+- [ ] `bash tools/run-direct-demo.sh` boots the sample in QEMU and the
+      sample's expected runtime log line appears (e.g. `got ip:`,
+      `wifi_init_softap finished`, `iperf TCP send N MBytes`, …).
+- [ ] No real ESP32 hardware required.
+
+### Phase-1 target samples (Day 22+)
+
+| Priority | Sample path | What it exercises |
+|----------|-------------|-------------------|
+| P0 | `examples/wifi/getting_started/station/` | STA connect + GOT_IP |
+| P0 | `examples/wifi/scan/` | active scan + result enumeration |
+| P1 | `examples/wifi/getting_started/softAP/` | AP mode + DHCP server |
+| P1 | `examples/protocols/sockets/tcp_client/` | lwIP TCP outbound |
+| P1 | `examples/protocols/sockets/udp_client/` | lwIP UDP outbound |
+| P2 | `examples/wifi/iperf/` | bandwidth API + ps mode |
+| P2 | `examples/wifi/power_save/` | esp_wifi_set_ps + sleep |
+| P2 | `examples/wifi/espnow/` | esp_now_* full API |
+| P3 | `examples/wifi/fast_scan/` | fine-grained scan_config |
+| P3 | `examples/wifi/wpa2_enterprise/` | enterprise auth |
+| P3 | `examples/wifi/smartconfig/` | smartconfig API |
+| P3 | `examples/wifi/itwt/` | individual TWT |
+| P3 | `examples/network/simple_sniffer/` | promiscuous mode |
+
+### Un-aligned parts inventory (gap list, sourced from Day 22 review)
+
+The following gaps prevent stock samples from running today. Each gap is a
+new BACKLOG item (see "Gap details" section below for fix plans).
+
+#### A. esp_wifi_* API surface gaps (linker would silently drop through to libnet80211)
+
+Currently overridden (16 symbols): `esp_wifi_init/deinit`, `set_mode/get_mode`,
+`start/stop`, `set_config/get_config`, `connect/disconnect`,
+`get_mac/set_mac`, `scan_start/scan_stop`,
+`scan_get_ap_num/scan_get_ap_records`.
+
+Currently NOT overridden but called by ESP-IDF samples — currently fall
+through to libnet80211 with `--allow-multiple-definition` and behavior is
+**undefined in QEMU** (most likely panic or silent no-op):
+
+- `esp_wifi_set_ps` / `esp_wifi_get_ps` — power save (iperf, power_save)
+- `esp_wifi_set_bandwidth` / `esp_wifi_get_bandwidth` — iperf
+- `esp_wifi_set_channel` / `esp_wifi_get_channel` — sniffer, fast_scan
+- `esp_wifi_set_country` / `esp_wifi_get_country` / `esp_wifi_get_country_code`
+- `esp_wifi_set_storage` — many samples set `WIFI_STORAGE_RAM`
+- `esp_wifi_set_protocol` / `esp_wifi_get_protocol`
+- `esp_wifi_set_max_tx_power` / `esp_wifi_get_max_tx_power`
+- `esp_wifi_restore` — many samples call this on boot
+- `esp_wifi_sta_get_ap_info` — fast_scan, mqtt
+- `esp_wifi_sta_get_rssi` — diagnostic UIs
+- `esp_wifi_set_promiscuous` / `_get_promiscuous` / `_filter` / `_rx_cb` —
+  sniffer
+- `esp_wifi_set_vendor_ie` / `_set_vendor_ie_cb`
+- `esp_wifi_set_inactive_time` / `_get_inactive_time`
+- `esp_wifi_set_event_mask` / `_get_event_mask`
+- `esp_wifi_80211_tx` — raw frame injection
+- `esp_wifi_set_csi` / `_set_csi_config` / `_set_csi_rx_cb` — CSI samples
+
+#### B. AP / SoftAP mode (entirely absent)
+
+- `esp_wifi_ap_get_sta_list` / `_ap_get_sta_aid`
+- `esp_wifi_deauth_sta`
+- `WIFI_MODE_AP` / `WIFI_MODE_APSTA` are accepted by `esp_wifi_set_mode` but
+  the QEMU device only models a STA endpoint. softAP samples will set the
+  mode then call `esp_wifi_set_config(WIFI_IF_AP, …)` which today is rejected
+  by our shim (only `WIFI_IF_STA` is wired).
+- Need: AP-side event flow `WIFI_EVENT_AP_START` / `_STACONNECTED` /
+  `_STADISCONNECTED` / `_AP_STOP`.
+- Mock side: `mock_wpa_supplicant.py` is STA-only; needs an AP variant or a
+  unified daemon with role config.
+- Relay side: AP mode needs an in-relay DHCP **server** that hands leases to
+  fictional client MACs.
+
+#### C. ESPNOW (entirely absent)
+
+`esp_now_init/deinit`, `_send/_recv`, `_register_send_cb/_register_recv_cb`,
+`_add_peer/_del_peer/_mod_peer`, `_get_peer/_fetch_peer`, `_set_pmk`,
+`_set_wake_window`, `_get_version`. ESPNOW has no infrastructure — frames
+are direct peer-to-peer. Either: (a) loopback echo within one QEMU instance,
+or (b) cross-instance via `wifi_packet_relay.py` carrying ESPNOW frames.
+
+#### D. WPS / SmartConfig (entirely absent)
+
+`esp_wifi_wps_*`, `esp_smartconfig_*`. Lower priority (P3).
+
+#### E. WPA2-Enterprise (entirely absent)
+
+`esp_wifi_sta_wpa2_ent_*`. Mock_wpa unconditionally answers SUCCESS — but
+enterprise samples set certificates via these APIs and would fail to link.
+
+#### F. esp_netif / driver-glue gaps
+
+- `esp_netif_attach_wifi_station` / `esp_netif_attach_wifi_ap` — currently
+  flow through libnet80211. They register `esp_wifi_internal_reg_rxcb` and
+  similar internals. Our shim avoids them by manually setting the driver
+  config in `esp_wifi_netif_init()`. **A standard ESP-IDF sample that calls
+  `esp_netif_create_default_wifi_sta()` works only by accident** (libnet80211
+  registers callbacks our shim never invokes). Need to formally document
+  which call paths are safe and which silently break.
+- `esp_wifi_internal_set_sta_ip` — used by `esp_netif` for static IP.
+- `esp_wifi_internal_reg_rxcb` / `_free_rx_buffer` — driver TX/RX callbacks.
+
+#### G. CMake / build-system alignment (CRITICAL for "no source change")
+
+Right now `main/CMakeLists.txt` explicitly `REQUIRES esp_wifi_qemu`. A stock
+ESP-IDF sample's `CMakeLists.txt` does NOT — it just `REQUIRES esp_wifi`.
+For our shim to be linked into a stock sample, one of:
+
+1. **Recommended**: provide a top-level CMake snippet
+   `tools/qemu-wifi-overlay.cmake` that the sample's project-level
+   `CMakeLists.txt` includes (one-line `include()` is the only allowed
+   "change"). The snippet sets `EXTRA_COMPONENT_DIRS` and forces a
+   `PRIV_REQUIRES esp_wifi_qemu` injection on every component that requires
+   `esp_wifi`.
+2. **Alternative**: `idf.py -DEXTRA_COMPONENT_DIRS=…` from the launcher
+   script `tools/run-direct-demo.sh`, plus a per-sample
+   `sdkconfig.defaults.qemu` overlay enabling `CONFIG_ESP_WIFI_QEMU=y`. This
+   keeps the sample's `CMakeLists.txt` byte-identical at the cost of a
+   non-standard build invocation.
+3. **Out-of-tree component manager**: publish `esp_wifi_qemu` as a managed
+   component (`idf_component.yml` with `dependencies`), so samples include it
+   via `idf_component.yml` override. Higher overhead.
+
+#### H. sdkconfig defaults that samples expect
+
+Stock Wi-Fi samples expect `CONFIG_ESP_WIFI_*` Kconfig knobs (e.g.
+`CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM`, `CONFIG_ESP_WIFI_RX_BA_WIN`,
+`CONFIG_ESP_WIFI_AMPDU_RX_ENABLED`). These pass through to the real
+`esp_wifi` component harmlessly today, but if we ever fully replace
+`esp_wifi`, we must continue accepting them as no-ops.
+
+#### I. lwIP / DHCP / DNS data-plane gaps
+
+- `wifi_packet_relay.py` does not implement DHCP server. Real ESP-IDF samples
+  enable DHCP client by default — they currently work only because mock_wpa
+  injects a static IP via `esp_netif_set_ip_info()` in our shim. A sample
+  that calls `esp_netif_dhcpc_start()` would hang.
+- No DNS proxy: samples that resolve hostnames (e.g. `pool.ntp.org`) fail.
+- No IPv6: `esp_netif_create_ip6_linklocal()` and IPv6 multicast samples
+  fail silently.
+- No NAT outbound to real internet: relay only maps `10.0.2.100` and
+  `10.0.2.2` to `127.0.0.1`. Samples that connect to public servers fail.
+
+#### J. Event ordering / timing correctness
+
+- Mode switch races (BUG-004 — see below).
+- `WIFI_EVENT_HOME_CHANNEL_CHANGE`, `WIFI_EVENT_STA_BEACON_TIMEOUT`,
+  `WIFI_EVENT_STA_BSS_RSSI_LOW`, `WIFI_EVENT_ROC_DONE` not emitted.
+- `IP_EVENT_AP_STAIPASSIGNED` not emitted (softAP DHCP).
+
+### High-level roadmap
+
+1. **Day 22 (today)**: gap analysis (this document) + dev-workflow update.
+2. **Day 23**: fix BUG-004 (event race) + BUG-005 (relay open timing).
+3. **Day 24**: ship build-system overlay (gap G option 1) + first stock
+   sample green run: `examples/wifi/getting_started/station/`.
+4. **Day 25**: API stub layer (gap A) — return `ESP_OK` / `ESP_ERR_NOT_SUPPORTED`
+   for all currently-unimplemented `esp_wifi_*` symbols so samples link
+   cleanly. Add per-stub log so we know which API a sample exercises.
+5. **Day 26**: GAP-001 — DHCP server in relay (gap I, partial). Stock
+   `tcp_client` sample runs end-to-end.
+6. **Day 27+**: SoftAP (gap B), then ESPNOW (gap C), then long-tail.
+
+### Why this matters
+
+A demo that requires forking every sample is "yet another fork";
+a simulator that runs them unchanged is *infrastructure*. The latter is
+what the manager has explicitly asked for.
+
+---
+
 ## NEXT-004 — lwIP socket proof over QEMU virtual Wi-Fi
 
 **Status:** Planned for Day 19, Linux.
