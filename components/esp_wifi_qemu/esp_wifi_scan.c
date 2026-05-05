@@ -15,12 +15,35 @@
 #include "esp_wifi.h"
 #include "esp_wifi_qemu.h"
 #include "esp_wifi_private.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 esp_err_t esp_wifi_scan_start(const wifi_scan_config_t *config, bool block)
 {
     (void)config;
-    (void)block;
-    return wifi_qemu_send_cmd(WIFI_CMD_SCAN, block ? 15000 : 0);
+
+    wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_SCAN);
+    if (!block) {
+        return ESP_OK;
+    }
+
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(15000);
+    while (xTaskGetTickCount() < deadline) {
+        uint32_t evt = wifi_qemu_read(WIFI_REG_EVENT);
+        if (evt == WIFI_EVT_ERROR) {
+            wifi_qemu_write(WIFI_REG_EVENT, 0);
+            return ESP_FAIL;
+        }
+        if (evt == WIFI_EVT_SCAN_DONE) {
+            wifi_qemu_write(WIFI_REG_EVENT, 0);
+            return ESP_OK;
+        }
+        if (wifi_qemu_read(WIFI_REG_SCAN_COUNT) > 0) {
+            return ESP_OK;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return ESP_ERR_TIMEOUT;
 }
 
 esp_err_t esp_wifi_scan_stop(void)

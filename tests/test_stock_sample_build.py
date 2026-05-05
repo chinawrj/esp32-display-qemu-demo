@@ -42,6 +42,12 @@ def test_run_stock_qemu_script_exists():
     assert script.stat().st_mode & 0o111, "run-stock-qemu.sh is not executable"
 
 
+def test_basic_wifi_smoke_script_exists():
+    script = TOOLS_DIR / "run-basic-wifi-smoke.sh"
+    assert script.exists(), f"run-basic-wifi-smoke.sh not found at {script}"
+    assert script.stat().st_mode & 0o111, "run-basic-wifi-smoke.sh is not executable"
+
+
 def test_run_stock_qemu_has_verify_profiles():
     script = TOOLS_DIR / "run-stock-qemu.sh"
     content = script.read_text()
@@ -59,6 +65,35 @@ def test_run_stock_qemu_scan_profile_checks_scan_results():
         "scan profile must verify stock scan output instead of Got IP"
     )
     assert "Scan results" in content
+
+
+def test_basic_wifi_smoke_covers_release_samples():
+    script = TOOLS_DIR / "run-basic-wifi-smoke.sh"
+    content = script.read_text()
+    expected = [
+        "examples/wifi/getting_started/station",
+        "examples/wifi/scan",
+        "examples/wifi/getting_started/softAP",
+    ]
+    for sample in expected:
+        assert sample in content, f"release smoke gate missing {sample}"
+
+
+def test_basic_wifi_smoke_uses_verify_profiles():
+    script = TOOLS_DIR / "run-basic-wifi-smoke.sh"
+    content = script.read_text()
+    for profile in ("station", "scan", "softap"):
+        assert f"|{profile}" in content, f"missing VERIFY_PROFILE={profile} entry"
+    assert "VERIFY_PROFILE=\"$profile\"" in content
+
+
+def test_basic_wifi_smoke_writes_per_sample_logs():
+    script = TOOLS_DIR / "run-basic-wifi-smoke.sh"
+    content = script.read_text()
+    assert "LOG_DIR" in content
+    assert "build.log" in content
+    assert "run.log" in content
+    assert "serial.log" in content
 
 
 # ---------------------------------------------------------------------------
@@ -243,3 +278,14 @@ def test_scan_map_get_mac_from_qemu_shim():
     assert "esp_wifi_qemu" in provider, (
         f"esp_wifi_get_mac should come from libesp_wifi_qemu, got: {provider}"
     )
+
+
+def test_scan_start_has_result_count_fallback():
+    """Blocking scan must not rely only on the single QEMU event register."""
+    scan_c = COMPONENT_DIR / "esp_wifi_scan.c"
+    content = scan_c.read_text()
+    assert "WIFI_REG_SCAN_COUNT" in content, (
+        "esp_wifi_scan_start must poll WIFI_REG_SCAN_COUNT as a fallback"
+    )
+    assert "WIFI_EVT_SCAN_DONE" in content
+    assert "ESP_ERR_TIMEOUT" in content
