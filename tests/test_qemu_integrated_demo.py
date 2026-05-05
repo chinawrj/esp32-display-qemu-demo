@@ -9,7 +9,7 @@ QEMU without real hardware:
         ↓  Unix domain socket
     mock_wpa_supplicant (tools/mock_wpa_supplicant.py)
         ↓  simulated wpa_supplicant ctrl responses
-    GOT_IP event → serial log "got ip:192.168.1.100"
+    GOT_IP event → serial log "got ip:10.0.2.15"
 
 Design note: We simulate the *Wi-Fi API*, not the underlying ESP32 hardware
 registers.  The esp_wifi_qemu component wraps public esp_wifi_* calls; tests
@@ -34,7 +34,7 @@ EFUSE_BIN = PROJECT_ROOT / "build" / "qemu_efuse.bin"
 
 # mock wpa_supplicant socket path for this test
 _MOCK_SOCKET = "/tmp/mock-wpa-integrated-demo"
-_MOCK_IP = "192.168.1.100"
+_MOCK_IP = "10.0.2.15"
 _MOCK_SSID = "QEMU_TEST"
 
 # The benchmark runs ~7 s; Wi-Fi starts after; allow generous headroom.
@@ -154,7 +154,7 @@ class TestIntegratedDemo:
     """End-to-end test: main firmware (LVGL + Wi-Fi) in QEMU with mock AP."""
 
     def test_got_ip_with_mock_ap(self):
-        """Main firmware must print 'got ip:192.168.1.100' within boot timeout.
+        """Main firmware must print 'got ip:10.0.2.15' within boot timeout.
 
         The test:
         1. Starts mock_wpa_supplicant (simulates a Wi-Fi AP at the API level).

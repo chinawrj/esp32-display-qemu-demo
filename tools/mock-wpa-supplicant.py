@@ -25,13 +25,16 @@ class MockWpaSupplicant:
     """Minimal wpa_supplicant ctrl socket mock."""
 
     def __init__(self, ctrl_path, ssid="TestAP", password="testpass",
-                 ip="192.168.1.100", mac="02:00:00:00:00:01",
+                 ip="10.0.2.15", mac="02:00:00:00:00:01",
+                 gateway="10.0.2.2", netmask="255.255.255.0",
                  scan_delay=0.1, connect_delay=0.3):
         self.ctrl_path    = ctrl_path
         self.ssid         = ssid
         self.password     = password
         self.ip           = ip
         self.mac          = mac
+        self.gateway      = gateway
+        self.netmask      = netmask
         self.scan_delay   = scan_delay
         self.connect_delay = connect_delay
 
@@ -158,6 +161,8 @@ class MockWpaSupplicant:
                 f"ip_address={self.ip}\n"
                 f"address={self.mac}\n"
                 f"wpa_state=COMPLETED\n"
+                f"gateway={self.gateway}\n"
+                f"subnet_mask={self.netmask}\n"
             )
 
         if cmd.startswith("DISABLE_NETWORK ") or cmd.startswith("REMOVE_NETWORK "):
@@ -191,7 +196,9 @@ def main():
                         help="Path for the Unix DGRAM socket (default: /tmp/mock-wpa-ctrl)")
     parser.add_argument("--ssid",     default="TestAP",       help="Fake AP SSID")
     parser.add_argument("--password", default="testpass",     help="Fake AP password")
-    parser.add_argument("--ip",       default="192.168.1.100",help="Fake assigned IP")
+    parser.add_argument("--ip",       default="10.0.2.15",   help="Fake assigned IP (default: 10.0.2.15, matches SLIRP relay)")
+    parser.add_argument("--gateway",  default="10.0.2.2",    help="Fake gateway IP (default: 10.0.2.2, SLIRP gateway)")
+    parser.add_argument("--netmask",  default="255.255.255.0",help="Fake subnet mask")
     parser.add_argument("--mac",      default="02:00:00:00:00:01",
                         help="Fake NIC MAC address")
     parser.add_argument("--scan-delay",    type=float, default=0.1,
@@ -206,6 +213,8 @@ def main():
         password=args.password,
         ip=args.ip,
         mac=args.mac,
+        gateway=args.gateway,
+        netmask=args.netmask,
         scan_delay=args.scan_delay,
         connect_delay=args.connect_delay,
     )

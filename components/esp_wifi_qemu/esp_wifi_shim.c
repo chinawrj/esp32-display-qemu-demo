@@ -29,6 +29,7 @@
 /* Forward declarations from esp_wifi_netif.c */
 esp_err_t esp_wifi_netif_init(esp_netif_t *netif);
 void      esp_wifi_netif_rx_frame(void);
+void      esp_wifi_netif_register_rx_buf(void);
 
 static const char *TAG = "wifi_qemu";
 
@@ -250,6 +251,9 @@ esp_err_t esp_wifi_start(void)
     ESP_LOGI(TAG, "start");
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 500);
     if (ret == ESP_OK) {
+        /* BUG-002 fix: pre-register RX DMA buffer so QEMU can deliver ARP
+         * and DHCP frames before the full netif driver is installed at GOT_IP. */
+        esp_wifi_netif_register_rx_buf();
         esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START, NULL, 0,
                        portMAX_DELAY);
     }

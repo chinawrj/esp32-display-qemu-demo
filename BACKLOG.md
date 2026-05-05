@@ -521,3 +521,104 @@ NEXT-001（QEMU 帧缓冲 → Chrome）和 NEXT-002（QEMU Wi-Fi STA）
 - SSID/密码以明文写入 `sdkconfig.defaults`（QEMU 测试专用值），
   生产代码应使用 NVS 或 Provisioning。
 - 不实现真实 TCP/UDP 数据通路（继承 NEXT-002 的限制）。
+
+---
+
+## Day 21 Architecture Review — Wi-Fi Emulation Bug Backlog
+
+Full analysis: see `docs/daily-logs/day-021-linux.md`.
+
+### BUG-004 — wifi_qemu_send_cmd() accepts any event (race condition)
+
+**Status:** Open. Scheduled for Day 22.
+
+`wifi_qemu_send_cmd()` polls `WIFI_REG_EVENT` and ACKs the first non-NONE
+event regardless of type. Two failure modes:
+
+1. A stale event from a previous command satisfies the next command's wait.
+2. `wifi_event_task` (10 ms polling) can race with `wifi_qemu_send_cmd` to
+   consume synchronous response events (INIT_DONE, START_DONE, STOP_DONE).
+
+**Fix plan**: For synchronous commands, `wifi_event_task` must not consume
+events. Add a `volatile bool s_cmd_in_flight` flag. When `wifi_qemu_send_cmd`
+is active, `wifi_event_task` skips the ACK loop. Alternatively, add a
+command-to-event mapping table so each command only accepts its designated
+response event.
+
+---
+
+### BUG-005 — pkt_relay_open() called at CMD_CONNECT, not CMD_INIT
+
+**Status:** Open. Scheduled for Day 22.
+
+The packet relay socket is opened during `WIFI_CMD_CONNECT` handling. If
+`ESP_WIFI_PKT_SOCKET` does not exist at that moment, data-plane is silently
+disabled with no retry. ARP / DHCP frames in the window between CONNECT and
+GOT_IP may be lost.
+
+**Fix plan**: Attempt `pkt_relay_open()` at `WIFI_CMD_START` time, with a
+warning if the socket is unavailable. Keep the `CMD_CONNECT` call as a fallback.
+
+---
+
+### BUG-006 — pkt_relay_send() treats EAGAIN as fatal
+
+**Status:** Open. Low priority.
+
+`pkt_relay_send()` closes the relay connection on any `send()` error including
+EAGAIN. Since the socket is non-blocking, a momentary backlog could silently
+kill data-plane connectivity.
+
+**Fix plan**: Check for `EAGAIN`/`EWOULDBLOCK` and implement a small TX retry
+loop before declaring failure.
+
+---
+
+### GAP-001 — No DHCP in wifi_packet_relay.py
+
+**Status:** Open. Medium priority.
+
+The relay does not implement DHCP. IP assignment comes exclusively from the
+wpa_supplicant STATUS ctrl message. A firmware that enables `DHCPC` would
+never receive a lease.
+
+**Fix plan**: Add a minimal DHCP server to `wifi_packet_relay.py` that always
+offers `10.0.2.15/24, gw=10.0.2.2, dns=8.8.8.8`. This also eliminates the
+ctrl-plane / data-plane IP split (ARCH-002).
+
+---
+
+### GAP-003 — Missing esp_wifi_restore() and bandwidth API stubs
+
+**Status:** Open. Low priority.
+
+`esp_wifi_restore()`, `esp_wifi_get_bandwidth()`, `esp_wifi_set_bandwidth()`,
+`esp_wifi_get_channel()`, `esp_wifi_set_channel()`, `esp_wifi_get_country()`,
+`esp_wifi_set_country()`, `esp_wifi_get_ps()`, `esp_wifi_set_ps()` are not
+implemented. Calls from application code would fall through to the real
+hardware driver and likely panic in QEMU.
+
+**Fix plan**: Add no-op / stub implementations returning `ESP_OK` or
+`ESP_ERR_NOT_SUPPORTED` in a new `esp_wifi_extras.c`.
+
+---
+
+### ARCH-001 — Single-value event register, no event queue
+
+**Status:** Open. Long-term technical debt.
+
+`WIFI_REG_EVENT` holds exactly one pending event. New events overwrite
+unacknowledged ones. The proper fix is a two-register design:
+- `WIFI_REG_CMD_RESULT` (0x010): synchronous command response code
+- `WIFI_REG_ASYNC_EVT` (0x014): asynchronous event queue head
+
+This is a breaking MMIO protocol change requiring firmware and QEMU side
+updates simultaneously.
+
+---
+
+### ARCH-002 — ctrl-plane and data-plane IP address spaces are independent
+
+**Status:** Partially mitigated (Day 21: aligned both to 10.0.2.x). Long-term
+debt remains until GAP-001 (DHCP) is implemented so the relay is the
+single source of IP truth.

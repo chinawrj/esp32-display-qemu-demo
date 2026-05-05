@@ -102,10 +102,37 @@ static void wpa_parse_status(ESPWifiState *s, const char *buf)
         }
     }
 
+    /* Parse gateway from STATUS if provided (mock_wpa_supplicant >= Day 21) */
+    p = strstr(buf, "\ngateway=");
+    if (p) {
+        char gw_str[32] = {0};
+        sscanf(p + 9, "%31[^\n]", gw_str);
+        struct in_addr addr;
+        if (inet_pton(AF_INET, gw_str, &addr) == 1) {
+            s->ip_gw = addr.s_addr;
+        }
+    }
+
+    /* Parse subnet mask from STATUS if provided */
+    p = strstr(buf, "\nsubnet_mask=");
+    if (p) {
+        char mask_str[32] = {0};
+        sscanf(p + 13, "%31[^\n]", mask_str);
+        struct in_addr addr;
+        if (inet_pton(AF_INET, mask_str, &addr) == 1) {
+            s->ip_mask = addr.s_addr;
+        }
+    }
+
+    /* Fallback: derive /24 mask and .1 gateway only if not provided by STATUS.
+     * This preserves backward compatibility with older mock implementations.
+     * New mock assigns 10.0.2.15/24 gw=10.0.2.2 explicitly. */
     if (s->ip_addr && !s->ip_mask) {
-        uint32_t a = ntohl(s->ip_addr);
         s->ip_mask = htonl(0xffffff00u);
-        s->ip_gw   = htonl((a & 0xffffff00u) | 1u);
+    }
+    if (s->ip_addr && !s->ip_gw) {
+        uint32_t a = ntohl(s->ip_addr);
+        s->ip_gw = htonl((a & 0xffffff00u) | 1u);
     }
 }
 

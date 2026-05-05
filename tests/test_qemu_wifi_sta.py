@@ -283,7 +283,7 @@ class TestQemuWifiDevice:
     @pytest.mark.skipif(not _has_wifi_sta_firmware(), reason=_REASON_NO_WIFI_STA)
     def test_qemu_wifi_sta_got_ip_mock(self):
         """wifi_sta firmware boots in QEMU, mock wpa_supplicant provides IP,
-        serial log must contain 'got ip:192.168.1.100'.
+        serial log must contain 'got ip:10.0.2.15'.
 
         Uses the project's mock wpa_supplicant daemon — no real Wi-Fi needed.
         """
@@ -294,7 +294,7 @@ class TestQemuWifiDevice:
 
         mock_socket = "/tmp/mock-wpa-qemu-e2e"
         mock_ssid   = "QEMU_TEST"
-        mock_ip     = "192.168.1.100"
+        mock_ip     = "10.0.2.15"
 
         # Clean up stale socket
         try:

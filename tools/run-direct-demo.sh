@@ -22,7 +22,7 @@
 #   ESP_RGB_WS_PORT       WebSocket port (default: 9334)
 #   HTTP_PORT             HTTP port for serving web/ (default: 8090)
 #   WIFI_CTRL_SOCKET      mock wpa_supplicant socket path (default: /tmp/mock-wpa-demo)
-#   MOCK_WIFI_IP          IP the mock AP assigns to firmware (default: 192.168.1.100)
+#   MOCK_WIFI_IP          IP the mock AP assigns to firmware (default: 10.0.2.15, SLIRP)
 #   LWIP_PROBE_PORT       TCP port for the host-side echo server (default: 9988)
 
 set -euo pipefail
@@ -58,7 +58,7 @@ done
 WS_PORT="${ESP_RGB_WS_PORT:-9334}"
 HTTP_PORT="${HTTP_PORT:-8090}"
 MOCK_SOCKET="${WIFI_CTRL_SOCKET:-/tmp/mock-wpa-demo}"
-MOCK_IP="${MOCK_WIFI_IP:-192.168.1.100}"
+MOCK_IP="${MOCK_WIFI_IP:-10.0.2.15}"
 PKT_SOCKET="${ESP_WIFI_PKT_SOCKET:-/tmp/pkt-relay-demo}"
 LWIP_PORT="${LWIP_PROBE_PORT:-9988}"
 
@@ -240,7 +240,7 @@ echo "│                                                                  │"
 echo "│  Open in Chrome:  $PAGE_URL"
 echo "│                                                                  │"
 echo "│  LVGL content appears ~3 s after boot.                          │"
-echo "│  Wi-Fi label updates to 'got ip:$MOCK_IP' ~15 s.  │"
+echo "│  Wi-Fi label updates to 'got ip:$MOCK_IP' ~15 s.    │"
 echo "│  Ctrl-C to stop.                                                 │"
 echo "└─────────────────────────────────────────────────────────────────┘"
 echo ""

@@ -42,6 +42,17 @@ static uint8_t s_tx_buf[WIFI_PKT_BUF_SIZE] __attribute__((aligned(4)));
 static uint8_t s_rx_buf[WIFI_PKT_BUF_SIZE] __attribute__((aligned(4)));
 
 /* ---------------------------------------------------------------------------
+ * BUG-002 fix: register RX DMA address early (before GOT_IP) so incoming
+ * ARP/DHCP frames are never dropped because rx_addr==0 in QEMU device.
+ * Called from esp_wifi_start() in esp_wifi_shim.c.
+ * -------------------------------------------------------------------------*/
+void esp_wifi_netif_register_rx_buf(void)
+{
+    wifi_qemu_write(WIFI_REG_RX_ADDR, (uint32_t)(uintptr_t)s_rx_buf);
+    ESP_LOGD(TAG, "RX DMA buffer pre-registered at %p", (void *)s_rx_buf);
+}
+
+/* ---------------------------------------------------------------------------
  * TX callback — called by lwIP to transmit a frame onto the virtual wire
  * -------------------------------------------------------------------------*/
 static esp_err_t qemu_wifi_transmit(void *h, void *buffer, size_t len)
@@ -66,13 +77,14 @@ static esp_err_t qemu_wifi_transmit(void *h, void *buffer, size_t len)
 }
 
 /* ---------------------------------------------------------------------------
- * RX buffer free callback — our buffer is static MMIO, nothing to free
+ * RX buffer free callback — called by esp_netif when it is done with a frame.
+ * We pass the malloc'd buf as the 'eb' argument to esp_netif_receive(), so
+ * this callback is invoked with that pointer and must free it.
  * -------------------------------------------------------------------------*/
 static void qemu_wifi_free_rx_buf(void *h, void *buffer)
 {
     (void)h;
-    (void)buffer;
-    /* Nothing to free — the buffer belongs to the caller's heap */
+    free(buffer);  /* BUG-003 fix: free the malloc'd RX frame buffer */
 }
 
 /* ---------------------------------------------------------------------------
@@ -111,7 +123,9 @@ esp_err_t esp_wifi_netif_init(esp_netif_t *netif)
         return ret;
     }
 
-    /* Register the RX DMA buffer address with QEMU (done once) */
+    /* Register the RX DMA buffer address with QEMU.
+     * Note: this is safe to call redundantly; esp_wifi_netif_register_rx_buf()
+     * may have already been called from esp_wifi_start() for early ARP. */
     wifi_qemu_write(WIFI_REG_RX_ADDR, (uint32_t)(uintptr_t)s_rx_buf);
 
     ESP_LOGI(TAG, "QEMU DMA netif driver installed (tx_buf=%p rx_buf=%p)",
@@ -156,8 +170,10 @@ void esp_wifi_netif_rx_frame(void)
         return;
     }
 
-    /* esp_netif_receive calls driver_free_rx_buffer(handle, buf) when done */
-    esp_err_t ret = esp_netif_receive(s_sta_netif, buf, rx_len, NULL);
+    /* esp_netif_receive takes ownership of buf. Pass buf as the 'eb'
+     * (extra-buffer) argument so esp_netif calls qemu_wifi_free_rx_buf(handle, buf)
+     * when done. BUG-003 fix: previously eb was NULL → buf was never freed. */
+    esp_err_t ret = esp_netif_receive(s_sta_netif, buf, rx_len, buf);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "esp_netif_receive failed: %s", esp_err_to_name(ret));
         free(buf);

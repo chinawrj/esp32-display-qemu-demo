@@ -34,7 +34,7 @@ EFUSE_BIN = PROJECT_ROOT / "build" / "qemu_efuse.bin"
 
 _MOCK_SOCKET   = "/tmp/mock-wpa-lwip-probe"
 _PKT_SOCKET    = "/tmp/pkt-relay-lwip-probe"
-_MOCK_IP       = "192.168.1.100"
+_MOCK_IP       = "10.0.2.15"
 _MOCK_SSID     = "QEMU_TEST"
 _LWIP_PORT     = int(os.environ.get("LWIP_PROBE_PORT", "9988"))
 
