@@ -191,7 +191,10 @@ check() {
 
 check "QEMU Wi-Fi init"  "QEMU virtual Wi-Fi|wifi_qemu_init|esp_wifi_qemu"
 check "STA started"      "WIFI_EVENT_STA_START|wifi.*start|sta_start"
-check "STA connected"    "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap"
+# STA connected check is optional — scan samples don't connect; skip with SKIP_CONNECTED=1
+if [ "${SKIP_CONNECTED:-0}" != "1" ]; then
+    check "STA connected"    "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap"
+fi
 check "Got IP"           "$EXPECT_PAT"
 check "No crash"         "Guru Meditation|abort\(\)" 1
 
