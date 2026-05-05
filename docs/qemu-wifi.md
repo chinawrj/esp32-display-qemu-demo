@@ -1,48 +1,70 @@
 # QEMU Virtual Wi-Fi — Architecture & Protocol Spec (NEXT-002)
 
-Status: **In progress** — Day 8 scaffold (protocol spec + component skeleton).
-Full implementation target: Days 9–13.
+Status: **Implemented** — NEXT-002 completed on Days 8-12; TCP/IP data-plane
+support landed on Day 14; the LVGL + Wi-Fi integrated demo landed on Days
+15-16.
 
 ---
 
 ## 1. Overview
 
 NEXT-002 adds a virtual Wi-Fi STA device to the Espressif QEMU fork so that
-ESP-IDF Wi-Fi applications run unmodified in the emulator.  The device bridges
-QEMU's memory-mapped I/O (MMIO) interface with the host's
-`wpa_supplicant` daemon via its Unix-domain ctrl socket.
+ESP-IDF Wi-Fi applications can run in the emulator through the public
+`esp_wifi_*` API. The simulator is intentionally implemented at the API/event
+boundary: firmware calls `esp_wifi_init()`, `esp_wifi_connect()`, scan APIs,
+and normal `esp_event` handlers; the QEMU component turns those operations into
+a private firmware-to-QEMU command channel and host-side ctrl socket traffic.
 
 ```
-  ESP-IDF firmware (unmodified)
-       │  esp_wifi_* API calls
+    ESP-IDF application firmware
+      │  public esp_wifi_* API calls + esp_event handlers
        ▼
-  Component: esp_wifi_qemu  (this repo, components/)
-       │  MMIO reads/writes to 0x3ff75000 (DR_REG_WDEV_BASE)
+    Component: esp_wifi_qemu API shim  (components/)
+      │  private MMIO mailbox at 0x3ff75000
        ▼
   QEMU device: esp_wifi   (tools/qemu-src/hw/net/esp_wifi.c)
-       │  Unix domain socket (async, non-blocking)
+      │  Unix domain socket ctrl protocol (async, non-blocking)
        ▼
-  Host wpa_supplicant  (must be running; ctrl socket path configurable)
-       │
+    Host ctrl daemon: real wpa_supplicant or tools/mock_wpa_supplicant.py
+      │  optional packet relay for TCP/IP data plane
        ▼
-  Host Wi-Fi NIC  ←→  Access Point
+    Host Wi-Fi NIC / mock AP
 ```
 
 ### Why this approach
 
-- `DR_REG_WDEV_BASE = 0x3ff75000` is the real ESP32 Wi-Fi peripheral base.
-  Using the same address means the Xtensa MMU mapping in the firmware binary
-  does not need to change.
-- All I/O is synchronous from the firmware's perspective (MMIO reg read/write);
-  the QEMU device handles async wpa_supplicant communication internally using
-  QEMU's GLib main loop (same pattern as `esp_rgb_ws.c`).
+- `DR_REG_WDEV_BASE = 0x3ff75000` is used as a stable mailbox address already
+  present in ESP32 address space, so the firmware can communicate with QEMU
+  without extra linker or MMU changes.
+- The mailbox is a project-defined protocol, not an attempt to reproduce the
+  ESP32 Wi-Fi hardware register map. Public `esp_wifi_*` behavior is the
+  compatibility target.
+- QEMU handles async ctrl-socket communication internally using QEMU's GLib
+  main loop (same pattern as `esp_rgb_ws.c`); firmware observes normal ESP-IDF
+  events such as `WIFI_EVENT_STA_CONNECTED` and `IP_EVENT_STA_GOT_IP`.
 - `CONFIG_ESP_WIFI_QEMU=y` in sdkconfig redirects `esp_wifi_*` to our stub
   component at compile time; unmodified release firmware keeps using the real
   blob driver.
 
+### Design boundary: API simulation, not register simulation
+
+This project simulates Wi-Fi at the **ESP-IDF API level**. The virtual device
+does not model the real ESP32 RF/MAC/PHY register interface, timing behavior,
+or closed-source Wi-Fi firmware internals. Instead:
+
+- Application code calls the same public `esp_wifi_*`, `esp_netif`, and
+  `esp_event` surfaces it would use on hardware.
+- `components/esp_wifi_qemu/` implements those public APIs and posts the same
+  high-level events the application expects.
+- The MMIO registers below are a private firmware-to-QEMU transport for commands,
+  status, events, scan results, IP metadata, and DMA buffer pointers.
+- Tests validate behavior at the application/event level, for example by
+  asserting serial output contains `got ip:` rather than by inspecting mailbox
+  register values.
+
 ---
 
-## 2. MMIO Register Map
+## 2. Private MMIO Mailbox
 
 Base address: `0x3ff75000` (`DR_REG_WDEV_BASE`)
 
@@ -73,7 +95,9 @@ All registers are 32-bit, little-endian.
 | 0x0d0  | `WIFI_CTRL_SOCKET_LEN`| RW | Length of wpa_supplicant ctrl socket path |
 | 0x0d4  | `WIFI_CTRL_SOCKET_PATH[0..15]` | RW | ctrl socket path bytes (64 bytes, offsets 0x0d4–0x114) |
 
-### Total MMIO size: 0x118 bytes
+Additional data-plane registers live through offset `0x120`; the complete
+mailbox range intentionally stays below `DR_REG_WDEV_BASE + 0x144`, where the
+ESP32 RNG device is mapped in QEMU.
 
 ---
 
@@ -189,19 +213,35 @@ Located at `components/esp_wifi_qemu/`.
 | `esp_wifi_init()` | Write `CMD_INIT` to MMIO; poll `EVT_INIT_DONE` |
 | `esp_wifi_set_mode(WIFI_MODE_STA)` | Write `CMD_SET_MODE_STA` |
 | `esp_wifi_start()` | Write `CMD_START`; wait `EVT_START_DONE`; post `WIFI_EVENT_STA_START` |
-| `esp_wifi_set_config(IF_STA, cfg)` | Write SSID/PASS to MMIO registers |
-| `esp_wifi_connect()` | Write `CMD_CONNECT`; wait `EVT_CONNECTED` |
-| `esp_wifi_scan_start()` | Write `CMD_SCAN`; wait `EVT_SCAN_DONE` |
+| `esp_wifi_set_config(IF_STA, cfg)` | Write SSID/PASS to mailbox registers |
+| `esp_wifi_connect()` | Write `CMD_CONNECT`; return immediately; async task posts connect/IP events |
+| `esp_wifi_scan_start()` | Write `CMD_SCAN`; optionally wait for `EVT_SCAN_DONE` |
 | `esp_wifi_scan_get_ap_records()` | Read `WIFI_SCAN_COUNT`, iterate `WIFI_SCAN_IDX` |
 | `esp_wifi_get_mac()` | Write `CMD_GET_MAC`; read `WIFI_MAC` registers |
 | `esp_wifi_deinit()` | Write `CMD_DEINIT` |
 | `esp_wifi_stop()` | Write `CMD_STOP`; wait `EVT_STOP_DONE` |
 | `esp_wifi_disconnect()` | Write `CMD_DISCONNECT`; wait `EVT_DISCONNECTED` |
 
-IRQ delivery: the virtual device asserts `GPIO 0` (or a dedicated IRQ line —
-TBD in Day 9 implementation) when `WIFI_EVENT ≠ 0` and the corresponding bit
-in `WIFI_IRQ_ENABLE` is set.  The component ISR reads `WIFI_EVENT`, posts the
-corresponding `esp_event_loop` event, then writes 0 to acknowledge.
+Event delivery is implemented by a FreeRTOS task in `esp_wifi_shim.c` polling
+`WIFI_REG_EVENT`. It posts the corresponding `esp_event_loop` events and then
+acknowledges the mailbox event by writing 0.
+
+### TCP/IP data plane
+
+Day 14 added a raw Ethernet data path between ESP-IDF lwIP and the QEMU Wi-Fi
+device. Firmware registers static DRAM TX/RX buffers with QEMU through
+`WIFI_REG_TX_ADDR` and `WIFI_REG_RX_ADDR`; writes to `WIFI_REG_TX_LEN` trigger
+QEMU to read a frame from guest memory, and `WIFI_EVT_RX_READY` tells firmware
+that QEMU wrote a received frame into the RX buffer. `esp_wifi_netif.c` installs
+an `esp_netif` transmit callback and injects RX frames with `esp_netif_receive()`.
+
+Current status: the lwIP data-plane plumbing is present, but app-level TCP/UDP
+traffic is not yet covered by an end-to-end runtime test. `tools/wifi_packet_relay.py`
+can relay ARP, UDP, TCP, and limited ICMP through `ESP_WIFI_PKT_SOCKET`, but
+the main integrated demo currently starts only the mock wpa_supplicant ctrl
+socket. Treat socket-level networking as **implemented but not accepted** until
+the demo/test harness starts the packet relay and proves an lwIP socket request
+from firmware reaches a host service.
 
 ---
 
@@ -215,7 +255,12 @@ corresponding `esp_event_loop` event, then writes 0 to acknowledge.
 | `components/esp_wifi_qemu/CMakeLists.txt` | Component build |
 | `components/esp_wifi_qemu/Kconfig.projbuild` | `CONFIG_ESP_WIFI_QEMU` |
 | `components/esp_wifi_qemu/include/esp_wifi_qemu.h` | Internal header |
-| `components/esp_wifi_qemu/esp_wifi_shim.c` | `esp_wifi_*` API stubs |
+| `components/esp_wifi_qemu/esp_wifi_shim.c` | Lifecycle API, command helper, event task |
+| `components/esp_wifi_qemu/esp_wifi_config.c` | Config, connect/disconnect, MAC APIs |
+| `components/esp_wifi_qemu/esp_wifi_scan.c` | Scan APIs |
+| `components/esp_wifi_qemu/esp_wifi_netif.c` | lwIP data-plane driver |
+| `tools/mock_wpa_supplicant.py` | Test/demo ctrl-socket daemon for API-level Wi-Fi simulation |
+| `tools/wifi_packet_relay.py` | Host-side packet relay for TCP/IP data-plane testing |
 | `sdkconfig.defaults` | `CONFIG_ESP_WIFI_QEMU=y` for QEMU builds |
 | `tests/test_qemu_wifi_sta.py` | Automated integration test |
 | `docs/qemu-wifi.md` | This document |
@@ -224,15 +269,18 @@ corresponding `esp_event_loop` event, then writes 0 to acknowledge.
 
 ## 9. Acceptance Criteria
 
-- [ ] `bash tools/build-qemu.sh` compiles `qemu-system-xtensa` with the
+- [x] `bash tools/build-qemu.sh` compiles `qemu-system-xtensa` with the
       `esp_wifi` device (zero errors, zero new warnings).
-- [ ] `examples/wifi_sta/main/app_main.c` (copied from ESP-IDF examples,
+- [x] `examples/wifi_sta/main/app_main.c` (copied from ESP-IDF examples,
       not modified) boots in QEMU and prints `got ip:`.
-- [ ] `pytest -q tests/test_qemu_wifi_sta.py` passes on Linux with a
-      running `wpa_supplicant` (skips otherwise).
-- [ ] Full existing test suite (62 passed) has zero regressions.
-- [ ] Real ESP32-C3/C6 build with `CONFIG_ESP_WIFI_QEMU=n` (default)
-      introduces zero new code or binary size change.
+- [x] `pytest -q tests/test_qemu_wifi_sta.py` passes on Linux with a
+  reachable ctrl socket or skips when runtime prerequisites are absent.
+- [x] Full existing test suite has zero regressions.
+- [x] The integrated LVGL + Wi-Fi demo boots in QEMU with
+  `tools/mock_wpa_supplicant.py` and prints `got ip:` without real Wi-Fi
+  hardware.
+- [x] Real hardware builds keep `CONFIG_ESP_WIFI_QEMU=n` by default, so the
+  shim stays out of normal firmware.
 
 ---
 
@@ -241,5 +289,8 @@ corresponding `esp_event_loop` event, then writes 0 to acknowledge.
 - **STA mode only** (AP / SoftAP / Wi-Fi Direct deferred).
 - **WPA2-Personal only**; WPA3-SAE, EAP enterprise deferred.
 - IP is read from `wpa_supplicant STATUS` output — no in-QEMU DHCP.
-- `lwIP` data-plane not emulated in v1; only control-plane events verified.
-- Requires host `wpa_supplicant` running and reachable ctrl socket.
+- TCP/IP data-plane forwarding is raw Ethernet over DMA buffers; it is not an
+  RF/MAC/PHY simulation.
+- Runtime tests need either a real host `wpa_supplicant` ctrl socket or
+  `tools/mock_wpa_supplicant.py`.
+- Only the ESP-IDF APIs used by the current demos/tests are implemented.

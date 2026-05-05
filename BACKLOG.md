@@ -8,6 +8,87 @@ The headline target is at the top.
 
 ---
 
+## NEXT-004 — lwIP socket proof over QEMU virtual Wi-Fi
+
+**Status:** Planned for Day 19, Linux.
+
+### Problem
+
+NEXT-002 and NEXT-003 prove the Wi-Fi control plane: firmware can call the
+public `esp_wifi_*` API, connect through the QEMU virtual Wi-Fi device, and
+receive `IP_EVENT_STA_GOT_IP`. Day 14 added raw Ethernet DMA plumbing between
+ESP-IDF lwIP and a host packet relay, but the accepted demo/test path still
+does not prove application-level socket traffic.
+
+In practical terms, the answer to "does lwIP over this Wi-Fi network work?" is
+currently: the plumbing exists, but it is not accepted until firmware opens a
+real TCP/UDP socket and receives a host response through `ESP_WIFI_PKT_SOCKET`.
+
+### Goal
+
+Add an end-to-end runtime proof that an ESP-IDF application can use lwIP over
+the QEMU virtual Wi-Fi network without real hardware.
+
+Target flow:
+
+```
+firmware lwIP socket
+  -> esp_wifi_qemu esp_netif transmit callback
+  -> QEMU esp_wifi DMA TX registers
+  -> tools/wifi_packet_relay.py
+  -> host echo/HTTP server on 127.0.0.1
+  -> relay response
+  -> QEMU DMA RX registers
+  -> esp_netif_receive()
+  -> firmware log: lwip echo ok
+```
+
+### Concrete subtasks (in order)
+
+1. Add a minimal firmware socket probe guarded by Kconfig, default enabled only
+  for the QEMU demo:
+  - after `IP_EVENT_STA_GOT_IP`, create a TCP socket;
+  - connect to `10.0.2.100:<CONFIG_DEMO_LWIP_PROBE_PORT>`;
+  - send a short request/payload;
+  - log `lwip probe ok:` when the expected response arrives.
+
+2. Update `tools/run-direct-demo.sh`:
+  - start `tools/wifi_packet_relay.py`;
+  - export `ESP_WIFI_PKT_SOCKET` before QEMU boots;
+  - optionally start a tiny host echo/HTTP server for manual demo mode;
+  - clean up relay/server processes on exit.
+
+3. Add pytest runtime coverage:
+  - start mock wpa_supplicant;
+  - start packet relay;
+  - start host echo/HTTP server;
+  - boot QEMU;
+  - assert serial log contains both `got ip:` and `lwip probe ok:`.
+
+4. Keep fast source checks so environments without QEMU still validate the
+  planned wiring and skip runtime tests cleanly.
+
+### Acceptance criteria
+
+- [ ] `idf.py build` succeeds with zero warnings.
+- [ ] `bash tools/run-direct-demo.sh` starts mock Wi-Fi ctrl socket and packet
+    relay, and firmware logs `lwip probe ok:`.
+- [ ] `pytest -q tests/test_qemu_integrated_demo.py` includes a runtime lwIP
+    probe test that passes when QEMU prerequisites are present and skips
+    cleanly otherwise.
+- [ ] Existing non-runtime tests keep passing.
+- [ ] The implementation remains API-level Wi-Fi simulation; no ESP32 Wi-Fi
+    hardware register modeling is introduced.
+
+### Known limitations (v1 scope)
+
+- TCP proof is enough for acceptance; UDP/ICMP can remain relay-supported but
+  separately unaccepted.
+- This is still a virtual STA-only path, not SoftAP or Wi-Fi Direct.
+- The packet relay is SLIRP-like test infrastructure, not a full network stack.
+
+---
+
 ## ★ NEXT-001 — QEMU-native framebuffer → Chrome export (no firmware changes)
 
 **Status:** ✅ **DONE** (Days 4–7, Linux).  
