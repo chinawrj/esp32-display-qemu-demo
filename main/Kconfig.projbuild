@@ -14,3 +14,31 @@ menu "Demo Wi-Fi Configuration"
             Wi-Fi password for the QEMU integration demo.
 
 endmenu
+
+menu "Demo lwIP Probe (NEXT-004)"
+
+    config DEMO_LWIP_PROBE_ENABLE
+        bool "Enable lwIP TCP socket probe after Wi-Fi connect"
+        default y
+        help
+            After IP_EVENT_STA_GOT_IP fires, open a TCP connection to
+            DEMO_LWIP_PROBE_HOST:DEMO_LWIP_PROBE_PORT and log
+            "lwip probe ok:" on success.  Used by NEXT-004 acceptance tests.
+
+    config DEMO_LWIP_PROBE_HOST
+        string "lwIP probe target host"
+        default "10.0.2.100"
+        depends on DEMO_LWIP_PROBE_ENABLE
+        help
+            IP address of the host-side echo server.  In QEMU SLIRP NAT,
+            10.0.2.100 maps to 127.0.0.1 on the host.
+
+    config DEMO_LWIP_PROBE_PORT
+        int "lwIP probe target port"
+        default 9988
+        depends on DEMO_LWIP_PROBE_ENABLE
+        help
+            TCP port of the host-side echo server started alongside QEMU
+            by tools/run-direct-demo.sh (or pytest fixture).
+
+endmenu

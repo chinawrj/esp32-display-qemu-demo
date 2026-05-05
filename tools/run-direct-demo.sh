@@ -15,6 +15,7 @@
 #   bash tools/run-direct-demo.sh --port 9334        # override WS port (default: 9334)
 #   bash tools/run-direct-demo.sh --duration 60      # auto-stop after 60 s
 #   bash tools/run-direct-demo.sh --no-wifi          # skip mock Wi-Fi daemon
+#   bash tools/run-direct-demo.sh --no-relay         # skip wifi_packet_relay (no lwIP probe)
 #
 # Environment overrides:
 #   QEMU_BIN              path to qemu-system-xtensa (default: tools/qemu-src/build/...)
@@ -22,6 +23,7 @@
 #   HTTP_PORT             HTTP port for serving web/ (default: 8090)
 #   WIFI_CTRL_SOCKET      mock wpa_supplicant socket path (default: /tmp/mock-wpa-demo)
 #   MOCK_WIFI_IP          IP the mock AP assigns to firmware (default: 192.168.1.100)
+#   LWIP_PROBE_PORT       TCP port for the host-side echo server (default: 9988)
 
 set -euo pipefail
 
@@ -34,16 +36,18 @@ cd "$PROJECT_DIR"
 MODE="browser"
 DURATION=""
 ENABLE_WIFI="1"
+ENABLE_RELAY="1"
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-browser) MODE="no-browser" ;;
         --no-wifi)    ENABLE_WIFI="0" ;;
+        --no-relay)   ENABLE_RELAY="0" ;;
         --port)       shift; ESP_RGB_WS_PORT="${1:-9334}" ;;
         --port=*)     ESP_RGB_WS_PORT="${1#--port=}" ;;
         --duration)   shift; DURATION="${1:-}" ;;
         --duration=*) DURATION="${1#--duration=}" ;;
         -h|--help)
-            sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) echo "[run-direct-demo] unknown arg: $1" >&2; exit 1 ;;
@@ -55,6 +59,8 @@ WS_PORT="${ESP_RGB_WS_PORT:-9334}"
 HTTP_PORT="${HTTP_PORT:-8090}"
 MOCK_SOCKET="${WIFI_CTRL_SOCKET:-/tmp/mock-wpa-demo}"
 MOCK_IP="${MOCK_WIFI_IP:-192.168.1.100}"
+PKT_SOCKET="${ESP_WIFI_PKT_SOCKET:-/tmp/pkt-relay-demo}"
+LWIP_PORT="${LWIP_PROBE_PORT:-9988}"
 
 # ---------------------------------------------------------------------------
 # Locate QEMU binary and firmware
@@ -80,6 +86,8 @@ fi
 QEMU_PID=""
 HTTP_PID=""
 MOCK_WPA_PID=""
+PKT_RELAY_PID=""
+ECHO_SRV_PID=""
 
 cleanup() {
     local rc=$?
@@ -88,6 +96,16 @@ cleanup() {
         echo "[run-direct-demo] stopping mock-wpa-supplicant (pid=$MOCK_WPA_PID)"
         kill "$MOCK_WPA_PID" 2>/dev/null
         wait "$MOCK_WPA_PID" 2>/dev/null
+    fi
+    if [ -n "$PKT_RELAY_PID" ] && kill -0 "$PKT_RELAY_PID" 2>/dev/null; then
+        echo "[run-direct-demo] stopping wifi_packet_relay (pid=$PKT_RELAY_PID)"
+        kill "$PKT_RELAY_PID" 2>/dev/null
+        wait "$PKT_RELAY_PID" 2>/dev/null
+    fi
+    if [ -n "$ECHO_SRV_PID" ] && kill -0 "$ECHO_SRV_PID" 2>/dev/null; then
+        echo "[run-direct-demo] stopping echo server (pid=$ECHO_SRV_PID)"
+        kill "$ECHO_SRV_PID" 2>/dev/null
+        wait "$ECHO_SRV_PID" 2>/dev/null
     fi
     if [ -n "$HTTP_PID" ] && kill -0 "$HTTP_PID" 2>/dev/null; then
         echo "[run-direct-demo] stopping HTTP server (pid=$HTTP_PID)"
@@ -132,6 +150,44 @@ if [ "$ENABLE_WIFI" = "1" ] && command -v python3 >/dev/null 2>&1; then
     fi
 else
     echo "[run-direct-demo] Wi-Fi mock disabled (--no-wifi or python3 unavailable)"
+fi
+
+# ---------------------------------------------------------------------------
+# Start wifi_packet_relay.py + host echo server (NEXT-004: lwIP data plane)
+# The relay bridges QEMU DMA packets to real TCP/UDP via SLIRP NAT.
+# The echo server listens on LWIP_PORT; firmware's lwip_probe.c connects to
+# 10.0.2.100:LWIP_PORT, which the relay maps to 127.0.0.1:LWIP_PORT.
+# ---------------------------------------------------------------------------
+if [ "$ENABLE_WIFI" = "1" ] && [ "$ENABLE_RELAY" = "1" ] && command -v python3 >/dev/null 2>&1; then
+    rm -f "$PKT_SOCKET"
+
+    # Start the relay daemon
+    echo "[run-direct-demo] starting wifi_packet_relay (socket=$PKT_SOCKET)..."
+    export ESP_WIFI_PKT_SOCKET="$PKT_SOCKET"
+    python3 "$PROJECT_DIR/tools/wifi_packet_relay.py" "$PKT_SOCKET" \
+        </dev/null >/tmp/pkt-relay-demo.log 2>&1 &
+    PKT_RELAY_PID=$!
+
+    # Start a minimal TCP echo server on LWIP_PORT
+    echo "[run-direct-demo] starting TCP echo server on port $LWIP_PORT..."
+    python3 "$PROJECT_DIR/tools/echo_server.py" "$LWIP_PORT" \
+        </dev/null >/tmp/echo-srv-demo.log 2>&1 &
+    ECHO_SRV_PID=$!
+
+    # Wait up to 2 s for relay socket to appear
+    for i in $(seq 1 20); do
+        [ -S "$PKT_SOCKET" ] && break
+        sleep 0.1
+    done
+    if [ -S "$PKT_SOCKET" ]; then
+        echo "[run-direct-demo] wifi_packet_relay ready."
+    else
+        echo "[run-direct-demo] WARN: pkt-relay socket did not appear; lwIP probe may fail." >&2
+        PKT_RELAY_PID=""
+    fi
+else
+    echo "[run-direct-demo] packet relay disabled (--no-relay, --no-wifi, or python3 unavailable)"
+    unset ESP_WIFI_PKT_SOCKET
 fi
 
 # ---------------------------------------------------------------------------
