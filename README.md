@@ -130,6 +130,19 @@ bash tools/start-demo.sh                 # full: build + boot + verify
 bash tools/start-demo.sh quick           # skip build
 ```
 
+### Stock ESP-IDF Wi-Fi Samples
+
+The QEMU Wi-Fi simulator can also build and run stock ESP-IDF Wi-Fi samples
+without editing their `.c` or `.h` files. The basic release gate covers
+station, scan, and softAP:
+
+```bash
+LOG_DIR=/tmp/qemu-wifi-smoke bash tools/run-basic-wifi-smoke.sh 60
+```
+
+See [docs/qemu-wifi-stock-samples.md](docs/qemu-wifi-stock-samples.md) for the
+per-sample build/run commands, expected serial logs, and known release limits.
+
 ### QEMU-native WebSocket viewer (recommended, no host bridge needed)
 
 `tools/run-direct-demo.sh` boots the patched QEMU binary whose built-in

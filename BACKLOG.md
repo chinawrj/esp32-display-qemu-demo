@@ -204,7 +204,7 @@ repeatable **basic STA/SCAN/AP** simulator release with matching tests.
 | Day 29 | AP hardening | GAP-B SoftAP event/API tests | Stock `softAP` builds/runs; AP start/config/station-list stubs covered; no station regression |
 | Day 30 | STA regression suite | GAP-F/G station path tests | Done: `tools/run-basic-wifi-smoke.sh` rebuilds and runs station/scan/softAP wrappers; runtime gate passed 3/3 |
 | Day 31 | Release automation | automated-testing runtime smoke profiles | Done: `tools/run-basic-wifi-smoke.sh` writes `summary.tsv`; station/scan/softAP runtime gate passed 3/3 |
-| Day 32 | Documentation freeze | `docs/qemu-wifi-stock-samples.md` | Release docs include prerequisites, build/run commands, expected logs, known limits |
+| Day 32 | Documentation freeze | `docs/qemu-wifi-stock-samples.md` | Done: release guide documents prerequisites, build/run commands, expected logs, known limits for station/scan/softAP |
 | Day 33 | Release candidate | final build/test matrix | Clean worktree; non-runtime tests pass; runtime smoke green for station/scan/softAP; tag-ready release notes drafted |
 
 Non-goals for this six-day release: ESPNOW, WPS/SmartConfig,

@@ -20,6 +20,7 @@ import pytest
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 COMPONENT_DIR = PROJECT_ROOT / "components" / "esp_wifi_qemu"
 TOOLS_DIR = PROJECT_ROOT / "tools"
+DOCS_DIR = PROJECT_ROOT / "docs"
 IDF_PATH = pathlib.Path.home() / "esp-idf"
 
 STATION_BUILD = IDF_PATH / "examples" / "wifi" / "getting_started" / "station" / "build_qemu"
@@ -118,6 +119,50 @@ def test_basic_wifi_smoke_records_run_failures():
     assert "run_status=\"fail\"" in content
     assert "run failed" in content
     assert "run_status=\"ok\"" in content
+
+
+def test_stock_sample_release_doc_exists():
+    doc = DOCS_DIR / "qemu-wifi-stock-samples.md"
+    assert doc.exists(), "stock Wi-Fi sample release guide is missing"
+
+
+def test_stock_sample_release_doc_covers_basic_samples():
+    doc = DOCS_DIR / "qemu-wifi-stock-samples.md"
+    content = doc.read_text()
+    for sample in (
+        "examples/wifi/getting_started/station/",
+        "examples/wifi/scan/",
+        "examples/wifi/getting_started/softAP/",
+    ):
+        assert sample in content
+    for profile in ("VERIFY_PROFILE=station", "VERIFY_PROFILE=scan", "VERIFY_PROFILE=softap"):
+        assert profile in content
+
+
+def test_stock_sample_release_doc_has_release_contract():
+    doc = DOCS_DIR / "qemu-wifi-stock-samples.md"
+    content = doc.read_text()
+    required = [
+        "Prerequisites",
+        "Build And Run One Sample",
+        "Expected Logs",
+        "Known Limits",
+        "run-basic-wifi-smoke.sh",
+        "summary.tsv",
+        "got ip:10.0.2.15",
+        "Total APs scanned",
+        "SSID QEMU_TEST",
+        "wifi_init_softap finished",
+    ]
+    for text in required:
+        assert text in content
+
+
+def test_readme_links_stock_sample_release_doc():
+    readme = PROJECT_ROOT / "README.md"
+    content = readme.read_text()
+    assert "docs/qemu-wifi-stock-samples.md" in content
+    assert "run-basic-wifi-smoke.sh" in content
 
 
 # ---------------------------------------------------------------------------
