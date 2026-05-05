@@ -96,6 +96,30 @@ def test_basic_wifi_smoke_writes_per_sample_logs():
     assert "serial.log" in content
 
 
+def test_basic_wifi_smoke_writes_summary_file():
+    script = TOOLS_DIR / "run-basic-wifi-smoke.sh"
+    content = script.read_text()
+    assert "SUMMARY_FILE" in content
+    assert "summary.tsv" in content
+    assert r"sample\tprofile\tbuild\trun\tbuild_log\trun_log\tserial_log" in content
+
+
+def test_basic_wifi_smoke_records_build_failures():
+    script = TOOLS_DIR / "run-basic-wifi-smoke.sh"
+    content = script.read_text()
+    assert "run_status=\"skipped\"" in content
+    assert "build_status=\"fail\"" in content
+    assert "build failed" in content
+
+
+def test_basic_wifi_smoke_records_run_failures():
+    script = TOOLS_DIR / "run-basic-wifi-smoke.sh"
+    content = script.read_text()
+    assert "run_status=\"fail\"" in content
+    assert "run failed" in content
+    assert "run_status=\"ok\"" in content
+
+
 # ---------------------------------------------------------------------------
 # CMakeLists.txt: --whole-archive is used to force stubs first
 # ---------------------------------------------------------------------------

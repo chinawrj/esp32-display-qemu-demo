@@ -10,6 +10,7 @@
 # Environment:
 #   IDF_PATH       ESP-IDF checkout path (auto-sources ~/esp-idf/export.sh if unset)
 #   LOG_DIR        Directory for per-sample logs (default: /tmp/qemu-wifi-smoke)
+#   SUMMARY_FILE   TSV summary path (default: $LOG_DIR/summary.tsv)
 #   QEMU_BIN       Optional qemu-system-xtensa override passed through to runner
 
 set -uo pipefail
@@ -18,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DURATION="${1:-60}"
 LOG_DIR="${LOG_DIR:-/tmp/qemu-wifi-smoke}"
+SUMMARY_FILE="${SUMMARY_FILE:-${LOG_DIR}/summary.tsv}"
 
 if [ -z "${IDF_PATH:-}" ] && [ -f "${HOME}/esp-idf/export.sh" ]; then
     # shellcheck disable=SC1091
@@ -30,6 +32,7 @@ if [ -z "${IDF_PATH:-}" ]; then
 fi
 
 mkdir -p "$LOG_DIR"
+printf "sample\tprofile\tbuild\trun\tbuild_log\trun_log\tserial_log\n" >"$SUMMARY_FILE"
 
 SAMPLES=(
     "station|${IDF_PATH}/examples/wifi/getting_started/station|station"
@@ -48,13 +51,19 @@ run_one() {
     local build_log="${LOG_DIR}/${name}-build.log"
     local run_log="${LOG_DIR}/${name}-run.log"
     local serial_log="${LOG_DIR}/${name}-serial.log"
+    local build_status="fail"
+    local run_status="skipped"
 
     echo "[basic-wifi-smoke] === ${name}: build ==="
     if bash "${PROJECT_DIR}/tools/build-stock-sample.sh" "$sample_dir" >"$build_log" 2>&1; then
         echo "[basic-wifi-smoke] ${name}: build ok"
+        build_status="ok"
     else
         echo "[basic-wifi-smoke] ${name}: build failed (log: ${build_log})"
         FAIL=$((FAIL + 1))
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+            "$name" "$profile" "$build_status" "$run_status" \
+            "$build_log" "$run_log" "$serial_log" >>"$SUMMARY_FILE"
         return
     fi
 
@@ -62,15 +71,22 @@ run_one() {
     if VERIFY_PROFILE="$profile" LOG_FILE="$serial_log" \
         bash "${PROJECT_DIR}/tools/run-stock-qemu.sh" "$build_dir" "$DURATION" >"$run_log" 2>&1; then
         echo "[basic-wifi-smoke] ${name}: run ok"
+        run_status="ok"
         PASS=$((PASS + 1))
     else
         echo "[basic-wifi-smoke] ${name}: run failed (log: ${run_log})"
+        run_status="fail"
         FAIL=$((FAIL + 1))
     fi
+
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$name" "$profile" "$build_status" "$run_status" \
+        "$build_log" "$run_log" "$serial_log" >>"$SUMMARY_FILE"
 }
 
 echo "[basic-wifi-smoke] IDF_PATH=${IDF_PATH}"
 echo "[basic-wifi-smoke] LOG_DIR=${LOG_DIR}"
+echo "[basic-wifi-smoke] SUMMARY_FILE=${SUMMARY_FILE}"
 echo "[basic-wifi-smoke] DURATION=${DURATION}"
 
 for entry in "${SAMPLES[@]}"; do
@@ -81,5 +97,6 @@ done
 echo ""
 echo "[basic-wifi-smoke] Summary: ${PASS} passed, ${FAIL} failed"
 echo "[basic-wifi-smoke] Logs: ${LOG_DIR}"
+echo "[basic-wifi-smoke] Summary file: ${SUMMARY_FILE}"
 
 [ "$FAIL" -eq 0 ]
