@@ -42,6 +42,25 @@ def test_run_stock_qemu_script_exists():
     assert script.stat().st_mode & 0o111, "run-stock-qemu.sh is not executable"
 
 
+def test_run_stock_qemu_has_verify_profiles():
+    script = TOOLS_DIR / "run-stock-qemu.sh"
+    content = script.read_text()
+    assert "VERIFY_PROFILE" in content, (
+        "run-stock-qemu.sh must support sample-aware verification profiles"
+    )
+    for profile in ("station", "scan", "softap", "custom"):
+        assert f"{profile})" in content, f"missing VERIFY_PROFILE={profile} case"
+
+
+def test_run_stock_qemu_scan_profile_checks_scan_results():
+    script = TOOLS_DIR / "run-stock-qemu.sh"
+    content = script.read_text()
+    assert "Total APs scanned" in content, (
+        "scan profile must verify stock scan output instead of Got IP"
+    )
+    assert "Scan results" in content
+
+
 # ---------------------------------------------------------------------------
 # CMakeLists.txt: --whole-archive is used to force stubs first
 # ---------------------------------------------------------------------------

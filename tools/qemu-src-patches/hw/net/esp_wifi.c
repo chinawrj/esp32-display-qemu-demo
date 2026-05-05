@@ -2,8 +2,8 @@
  * ESP32 Virtual Wi-Fi device — QEMU hardware model
  *
  * Day 10: wpa_supplicant ctrl socket async I/O via GLib GIOChannel.
- * Full CMD_CONNECT flow: ATTACH → SCAN → ADD_NETWORK → SET_NETWORK ×2
- * → SELECT_NETWORK → CTRL-EVENT-CONNECTED → STATUS → EVT_GOT_IP.
+ * Full CMD_CONNECT flow: ATTACH -> SCAN -> ADD_NETWORK -> SET_NETWORK x2
+ * -> SELECT_NETWORK -> CTRL-EVENT-CONNECTED -> STATUS -> EVT_GOT_IP.
  *
  * Protocol spec: docs/qemu-wifi.md
  *
@@ -226,8 +226,14 @@ static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
                 if (line) { line++; }
             }
             s->scan_count = count;
-            s->conn_state = WPA_CONN_ADD_NET_SENT;
-            wpa_ctrl_send(s, "ADD_NETWORK");
+            if (s->scan_only) {
+                s->scan_only = false;
+                s->conn_state = WPA_CONN_IDLE;
+                esp_wifi_post_event(s, WIFI_EVT_SCAN_DONE);
+            } else {
+                s->conn_state = WPA_CONN_ADD_NET_SENT;
+                wpa_ctrl_send(s, "ADD_NETWORK");
+            }
         }
         break;
 
@@ -665,6 +671,7 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
 
     case WIFI_CMD_CONNECT:
         if (s->status == WIFI_STATE_STARTED) {
+            s->scan_only = false;
             s->conn_state = WPA_CONN_SCAN_SENT;
             wpa_ctrl_send(s, "SCAN");
             /* Relay should already be open from CMD_START; keep fallback. */
@@ -695,9 +702,11 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
 
     case WIFI_CMD_SCAN:
         if (s->ctrl_fd >= 0) {
+            s->scan_only = true;
             s->conn_state = WPA_CONN_SCAN_SENT;
             wpa_ctrl_send(s, "SCAN");
         } else {
+            s->scan_only = false;
             s->scan_count = 0;
             esp_wifi_post_event(s, WIFI_EVT_SCAN_DONE);
         }
@@ -945,6 +954,7 @@ static void esp_wifi_reset(DeviceState *dev)
     s->ctrl_sock_path_len = 0;
     s->net_id             = -1;
     s->conn_state         = WPA_CONN_NONE;
+    s->scan_only          = false;
     s->tx_len             = 0;
     s->rx_len             = 0;
 

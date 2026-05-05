@@ -182,18 +182,34 @@ Stock Wi-Fi samples expect `CONFIG_ESP_WIFI_*` Kconfig knobs (e.g.
   `WIFI_EVENT_STA_BSS_RSSI_LOW`, `WIFI_EVENT_ROC_DONE` not emitted.
 - `IP_EVENT_AP_STAIPASSIGNED` not emitted (softAP DHCP).
 
-### High-level roadmap
+### Current support matrix (Day 28 start, 2026-05-05)
 
-1. **Day 22 (today)**: gap analysis (this document) + dev-workflow update.
-2. **Day 23**: fix BUG-004 (event race) + BUG-005 (relay open timing).
-3. **Day 24**: ship build-system overlay (gap G option 1) + first stock
-   sample green run: `examples/wifi/getting_started/station/`.
-4. **Day 25**: API stub layer (gap A) — return `ESP_OK` / `ESP_ERR_NOT_SUPPORTED`
-   for all currently-unimplemented `esp_wifi_*` symbols so samples link
-   cleanly. Add per-stub log so we know which API a sample exercises.
-5. **Day 26**: GAP-001 — DHCP server in relay (gap I, partial). Stock
-   `tcp_client` sample runs end-to-end.
-6. **Day 27+**: SoftAP (gap B), then ESPNOW (gap C), then long-tail.
+| Sample | Build | QEMU run | Release relevance |
+|--------|-------|----------|-------------------|
+| `examples/wifi/getting_started/station/` | Done | Done: `got ip:10.0.2.15` | Basic STA gate |
+| `examples/wifi/scan/` | Done | Done: `Total APs scanned = 1`, `SSID QEMU_TEST` | Basic SCAN gate |
+| `examples/wifi/getting_started/softAP/` | Done | Done: `wifi_init_softap finished` | Basic AP gate |
+| `examples/protocols/sockets/tcp_client/` | Done | Done: `Echo: Message from ESP32` | Data-plane confidence |
+| `examples/protocols/sockets/udp_client/` | Not started | Not started | Stretch after release gate |
+
+### Six-day formal release plan: basic STA/SCAN/AP
+
+Manager request (Day 28): prepare a formal release after 6 days. The release
+target is not long-tail Wi-Fi completeness; it is a stable, documented,
+repeatable **basic STA/SCAN/AP** simulator release with matching tests.
+
+| Day | Focus | GAPs / tests | Exit criteria |
+|-----|-------|--------------|---------------|
+| Day 28 | SCAN hardening | GAP-J scan event ordering; runner verifier tests | Stock `wifi/scan` prints `Total APs scanned` and `SSID QEMU_TEST`; non-runtime tests cover scan-only QEMU flow |
+| Day 29 | AP hardening | GAP-B SoftAP event/API tests | Stock `softAP` builds/runs; AP start/config/station-list stubs covered; no station regression |
+| Day 30 | STA regression suite | GAP-F/G station path tests | One command rebuilds and runs station/scan/softAP wrappers; station emits `got ip:` reliably |
+| Day 31 | Release automation | automated-testing runtime smoke profiles | `tools/run-stock-qemu.sh` has sample-aware verification profiles for station/scan/softAP |
+| Day 32 | Documentation freeze | `docs/qemu-wifi-stock-samples.md` | Release docs include prerequisites, build/run commands, expected logs, known limits |
+| Day 33 | Release candidate | final build/test matrix | Clean worktree; non-runtime tests pass; runtime smoke green for station/scan/softAP; tag-ready release notes drafted |
+
+Non-goals for this six-day release: ESPNOW, WPS/SmartConfig,
+WPA2-Enterprise, promiscuous/sniffer, IPv6, DNS proxy, and external internet
+NAT. Keep those in the backlog after the release gate.
 
 ### Why this matters
 

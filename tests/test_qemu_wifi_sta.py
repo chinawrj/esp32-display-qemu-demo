@@ -35,6 +35,12 @@ ESP_WIFI_C = (
 ESP_WIFI_H = (
     PROJECT_ROOT / "tools" / "qemu-src" / "include" / "hw" / "net" / "esp_wifi.h"
 )
+ESP_WIFI_PATCH_C = (
+    PROJECT_ROOT / "tools" / "qemu-src-patches" / "hw" / "net" / "esp_wifi.c"
+)
+ESP_WIFI_PATCH_H = (
+    PROJECT_ROOT / "tools" / "qemu-src-patches" / "include" / "hw" / "net" / "esp_wifi.h"
+)
 
 _WIFI_CTRL_SOCKET = os.environ.get(
     "WIFI_CTRL_SOCKET",
@@ -188,16 +194,38 @@ class TestSourceFiles:
 
     def test_qemu_wifi_header_exists(self):
         """esp_wifi.h patch header must be present in qemu-src-patches."""
-        header_path = (
-            PROJECT_ROOT
-            / "tools"
-            / "qemu-src-patches"
-            / "include"
-            / "hw"
-            / "net"
-            / "esp_wifi.h"
-        )
+        header_path = ESP_WIFI_PATCH_H
         assert header_path.is_file(), f"Missing QEMU device header: {header_path}"
+
+    def test_scan_command_has_scan_only_state(self):
+        """WIFI_CMD_SCAN must not fall through into the CONNECT state machine."""
+        src = ESP_WIFI_PATCH_C.read_text()
+        header = ESP_WIFI_PATCH_H.read_text()
+        assert "scan_only" in header, (
+            "ESPWifiState must track scan_only so WIFI_CMD_SCAN can be "
+            "distinguished from the scan phase of WIFI_CMD_CONNECT."
+        )
+        assert "case WIFI_CMD_SCAN:" in src
+        scan_case = src[src.index("case WIFI_CMD_SCAN:"):src.index("case WIFI_CMD_GET_MAC:")]
+        assert "s->scan_only = true" in scan_case, (
+            "WIFI_CMD_SCAN must set scan_only before sending SCAN to mock_wpa."
+        )
+
+    def test_scan_results_post_scan_done_for_scan_only(self):
+        """Parsed scan results must post WIFI_EVT_SCAN_DONE for scan-only calls."""
+        src = ESP_WIFI_PATCH_C.read_text()
+        case_start = src.index("case WPA_CONN_SCAN_RESULTS_SENT:")
+        case_end = src.index("case WPA_CONN_ADD_NET_SENT:")
+        scan_results_case = src[case_start:case_end]
+        assert "if (s->scan_only)" in scan_results_case, (
+            "SCAN_RESULTS handler must branch when the command was WIFI_CMD_SCAN."
+        )
+        assert "esp_wifi_post_event(s, WIFI_EVT_SCAN_DONE)" in scan_results_case, (
+            "WIFI_CMD_SCAN must complete by posting WIFI_EVT_SCAN_DONE."
+        )
+        assert "wpa_ctrl_send(s, \"ADD_NETWORK\")" in scan_results_case, (
+            "Connect flow must still continue into ADD_NETWORK after scan results."
+        )
 
     def test_qemu_binary_contains_wifi_type(self):
         """QEMU binary must contain the 'net.esp.wifi' type string."""

@@ -19,7 +19,8 @@
 #   WIFI_SSID          SSID the mock AP advertises (default: QEMU_TEST)
 #   WIFI_PASS          password (default: qemu1234, mock ignores it anyway)
 #   MOCK_WIFI_IP       IP assigned to firmware STA (default: 10.0.2.15)
-#   EXPECT_PATTERN     log pattern to verify (default: "got ip:[0-9]")
+#   VERIFY_PROFILE     station | scan | softap | custom (default: station)
+#   EXPECT_PATTERN     log pattern to verify (profile-specific default)
 #   LOG_FILE           where to write QEMU serial output (default: /tmp/stock-qemu.log)
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -43,13 +44,36 @@ DURATION="${2:-60}"
 WIFI_SSID="${WIFI_SSID:-QEMU_TEST}"
 WIFI_PASS="${WIFI_PASS:-qemu1234}"
 MOCK_IP="${MOCK_WIFI_IP:-10.0.2.15}"
-EXPECT_PAT="${EXPECT_PATTERN:-got ip:[0-9]}"
+VERIFY_PROFILE="${VERIFY_PROFILE:-station}"
+EXPECT_PAT="${EXPECT_PATTERN:-}"
 LOG_FILE="${LOG_FILE:-/tmp/stock-qemu.log}"
 MOCK_SOCKET="${ESP_WIFI_CTRL_SOCKET:-/tmp/stock-mock-wpa}"
 PKT_SOCKET="${ESP_WIFI_PKT_SOCKET:-/tmp/stock-pkt-relay}"
 TCP_ECHO_PORT="${TCP_ECHO_PORT:-0}"   # 0 = don't start echo server
 
 QEMU_BIN="${QEMU_BIN:-${PROJECT_DIR}/tools/qemu-src/build/qemu-system-xtensa}"
+
+case "$VERIFY_PROFILE" in
+    station)
+        EXPECT_PAT="${EXPECT_PAT:-got ip:[0-9]}"
+        ;;
+    scan)
+        EXPECT_PAT="${EXPECT_PAT:-Total APs scanned|SSID[[:space:]]+${WIFI_SSID}}"
+        SKIP_CONNECTED=1
+        ;;
+    softap)
+        EXPECT_PAT="${EXPECT_PAT:-wifi_init_softap finished|WIFI_EVENT_AP_START|AP_START}"
+        SKIP_CONNECTED=1
+        ;;
+    custom)
+        EXPECT_PAT="${EXPECT_PAT:-got ip:[0-9]}"
+        ;;
+    *)
+        echo "ERROR: unsupported VERIFY_PROFILE=${VERIFY_PROFILE}" >&2
+        echo "  supported: station, scan, softap, custom" >&2
+        exit 2
+        ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -203,12 +227,23 @@ check() {
 }
 
 check "QEMU Wi-Fi init"  "QEMU virtual Wi-Fi|wifi_qemu_init|esp_wifi_qemu"
-check "STA started"      "WIFI_EVENT_STA_START|wifi.*start|sta_start"
-# STA connected check is optional — scan samples don't connect; skip with SKIP_CONNECTED=1
-if [ "${SKIP_CONNECTED:-0}" != "1" ]; then
-    check "STA connected"    "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap"
-fi
-check "Got IP"           "$EXPECT_PAT"
+case "$VERIFY_PROFILE" in
+    station|custom)
+        check "STA started"      "WIFI_EVENT_STA_START|wifi.*start|sta_start"
+        # STA connected check is optional; skip with SKIP_CONNECTED=1.
+        if [ "${SKIP_CONNECTED:-0}" != "1" ]; then
+            check "STA connected" "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap"
+        fi
+        check "Expected log"     "$EXPECT_PAT"
+        ;;
+    scan)
+        check "STA started"      "WIFI_EVENT_STA_START|wifi.*start|sta_start"
+        check "Scan results"     "$EXPECT_PAT"
+        ;;
+    softap)
+        check "SoftAP ready"     "$EXPECT_PAT"
+        ;;
+esac
 check "No crash"         "Guru Meditation|abort\(\)" 1
 
 echo ""

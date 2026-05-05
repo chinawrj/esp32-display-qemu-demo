@@ -162,6 +162,9 @@ typedef struct ESPWifiState {
     uint8_t     pkt_rx_data[WIFI_PKT_BUF_SIZE]; /**< partial frame data      */
     int         pkt_rx_data_pos;    /**< bytes received into pkt_rx_data      */
     int         pkt_rx_expected;    /**< total frame bytes expected           */
+
+    /* --- Control-flow flags ----------------------------------------------- */
+    bool        scan_only;          /**< true for WIFI_CMD_SCAN (not CONNECT) */
 } ESPWifiState;
 
 /* ---------- wpa_supplicant connection-sequencing state -------------------- */
