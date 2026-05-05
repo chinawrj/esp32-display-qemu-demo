@@ -19,8 +19,12 @@ CONFIG_ESP_WIFI_QEMU=y
 # ── QEMU Wi-Fi credentials ────────────────────────────────────────────────
 # The mock wpa_supplicant answers any SSID/password combination, so these
 # are just defaults; override them per-sample if needed.
+# CONFIG_DEMO_* keys are used by our own wifi_ui.c demo component.
+# CONFIG_ESP_WIFI_* keys are used by stock ESP-IDF station/scan samples.
 CONFIG_DEMO_WIFI_SSID="QEMU_TEST"
 CONFIG_DEMO_WIFI_PASSWORD="qemu1234"
+CONFIG_ESP_WIFI_SSID="QEMU_TEST"
+CONFIG_ESP_WIFI_PASSWORD="qemu1234"
 
 # ── Disable hardware-only features that panic in QEMU ─────────────────────
 # Watchdog resets interfere with QEMU's slower simulation speed.
