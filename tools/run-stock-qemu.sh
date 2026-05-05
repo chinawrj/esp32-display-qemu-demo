@@ -47,6 +47,7 @@ EXPECT_PAT="${EXPECT_PATTERN:-got ip:[0-9]}"
 LOG_FILE="${LOG_FILE:-/tmp/stock-qemu.log}"
 MOCK_SOCKET="${ESP_WIFI_CTRL_SOCKET:-/tmp/stock-mock-wpa}"
 PKT_SOCKET="${ESP_WIFI_PKT_SOCKET:-/tmp/stock-pkt-relay}"
+TCP_ECHO_PORT="${TCP_ECHO_PORT:-0}"   # 0 = don't start echo server
 
 QEMU_BIN="${QEMU_BIN:-${PROJECT_DIR}/tools/qemu-src/build/qemu-system-xtensa}"
 
@@ -109,10 +110,12 @@ fi
 # ---------------------------------------------------------------------------
 MOCK_PID=""
 RELAY_PID=""
+ECHO_PID=""
 
 cleanup() {
     [ -n "$MOCK_PID"  ] && kill "$MOCK_PID"  2>/dev/null || true
     [ -n "$RELAY_PID" ] && kill "$RELAY_PID" 2>/dev/null || true
+    [ -n "$ECHO_PID"  ] && kill "$ECHO_PID"  2>/dev/null || true
     rm -f "$MOCK_SOCKET" "$PKT_SOCKET"
 }
 trap cleanup EXIT INT TERM
@@ -141,6 +144,16 @@ python3 "${PROJECT_DIR}/tools/wifi_packet_relay.py" \
     "$PKT_SOCKET" &
 RELAY_PID=$!
 sleep 1
+
+# ---------------------------------------------------------------------------
+# Optionally start TCP echo server (for tcp_client / udp_client samples)
+# ---------------------------------------------------------------------------
+if [ "${TCP_ECHO_PORT}" != "0" ]; then
+    echo "[run-stock-qemu] Starting TCP echo server on port ${TCP_ECHO_PORT}"
+    python3 "${PROJECT_DIR}/tools/tcp_echo_server.py" "${TCP_ECHO_PORT}" &
+    ECHO_PID=$!
+    sleep 1
+fi
 
 # ---------------------------------------------------------------------------
 # Boot QEMU

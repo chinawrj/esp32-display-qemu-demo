@@ -97,3 +97,11 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: Day 6 first fix for blank WS frames used `address_space_rw(&s->vram_as, 0, MEMTXATTRS_UNSPECIFIED, pixels, pixel_size, false)`. Despite the VRAM file having content (15,120 nonzero pixels), this call returned all-zeros. Root cause: in `esp32.c`, `memory_region_add_subregion_overlap(sys_mem, 0x20000000, &s->rgb.vram, 0)` sets `s->vram->container = sys_mem` and triggers a QEMU-internal flatview invalidation for all address spaces that reference `s->vram`. The flatview for `s->vram_as` (whose root IS `s->vram`) gets invalidated; subsequent `address_space_rw()` calls recompute it with `s->vram` in a partially-added state, yielding zero-length or unmapped flatview entries. The result is a silent zero-fill of the read buffer. This is a QEMU API footgun: when a MemoryRegion is used as BOTH the root of a private AddressSpace AND a subregion of a container AddressSpace, the private flatview becomes unreliable after the container mapping.
 - **Workaround**: Use `memory_region_get_ram_ptr(&s->vram)` + `memcpy()` to read VRAM. This bypasses address-space translation entirely and directly dereferences the host-side RAM pointer. Always valid for RAM regions created with `memory_region_init_ram()` or `memory_region_init_ram_from_file()`. The fix: `void *vram_raw = memory_region_get_ram_ptr(&s->vram); memcpy(pixels, vram_raw, pixel_size);`
 - **Priority**: high
+
+### FB-013 (2026-05-05)
+- **Skill**: automated-testing / tools/run-stock-qemu.sh
+- **Category**: improvement
+- **Summary**: Stock scan smoke checks need sample-aware verification instead of station-only checks.
+- **Detail**: During Day 27 regression, `wifi/scan` built and reached the QEMU mock scan path, but `run-stock-qemu.sh` still reported failures because its default verification expects STA connect/Got IP patterns in the QEMU serial log. For scan, the useful evidence is scan result handling (`QEMU_TEST` / AP records), and today that appeared in helper output rather than the serial-only `LOG_FILE` used by the verifier.
+- **Workaround**: Treat scan runtime as a manual smoke check for now: inspect the full redirected log for `QEMU_TEST`, and use `SKIP_CONNECTED=1` when running scan. Long-term, add sample profiles or a verifier log that captures both QEMU serial and helper output.
+- **Priority**: medium

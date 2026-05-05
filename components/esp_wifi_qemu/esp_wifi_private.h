@@ -18,6 +18,12 @@
 
 /* Shared Wi-Fi configuration — written by esp_wifi_set_config,
  * read by esp_wifi_get_config, esp_wifi_connect, and wifi_event_task. */
+
+/* Transmit a raw Ethernet frame via QEMU MMIO (esp_wifi_netif.c).
+ * Called from esp_wifi_internal_tx() when the IDF default wifi driver
+ * is in use (e.g. protocol_examples_common based samples). */
+int qemu_wifi_tx_raw(const void *buffer, uint16_t len);
+
 extern wifi_config_t s_sta_cfg;
 
 #endif /* CONFIG_ESP_WIFI_QEMU */

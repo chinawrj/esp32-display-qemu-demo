@@ -38,3 +38,18 @@ CONFIG_LWIP_ARP_MAXAGE=30
 # Lenient DHCP client timeout (we inject IP via mock_wpa so DHCP never
 # replies, but dhcpc won't abort if it is disabled or times out gracefully).
 CONFIG_LWIP_DHCP_MAX_NTP_SERVERS=0
+
+# protocol_examples_common (tcp_client, udp_client, ...)
+# Select Wi-Fi as connection type.
+CONFIG_EXAMPLE_CONNECT_WIFI=y
+CONFIG_EXAMPLE_WIFI_SSID="QEMU_TEST"
+CONFIG_EXAMPLE_WIFI_PASSWORD="qemu1234"
+# Retry quickly in QEMU; mock_wpa answers immediately.
+CONFIG_EXAMPLE_WIFI_CONN_MAX_RETRY=5
+
+# TCP/UDP socket examples
+# Use IPv4 string mode; target the QEMU relay gateway (maps to 127.0.0.1).
+CONFIG_EXAMPLE_IPV4=y
+CONFIG_EXAMPLE_SOCKET_IP_INPUT_STRING=y
+CONFIG_EXAMPLE_IPV4_ADDR="10.0.2.2"
+CONFIG_EXAMPLE_PORT=3333

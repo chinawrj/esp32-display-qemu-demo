@@ -25,6 +25,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi_qemu.h"
+#include "esp_wifi_private.h"
 
 static const char *TAG = "wifi_netif";
 
@@ -54,26 +55,29 @@ void esp_wifi_netif_register_rx_buf(void)
 
 /* ---------------------------------------------------------------------------
  * TX callback — called by lwIP to transmit a frame onto the virtual wire
+ * Also exposed as qemu_wifi_tx_raw() for esp_wifi_internal_tx() (the path
+ * used by the IDF default wifi driver when app calls
+ * esp_wifi_set_default_wifi_sta_handlers).
  * -------------------------------------------------------------------------*/
 static esp_err_t qemu_wifi_transmit(void *h, void *buffer, size_t len)
 {
     (void)h;
+    return qemu_wifi_tx_raw(buffer, (uint16_t)len) == 0 ? ESP_OK : ESP_ERR_NO_MEM;
+}
 
-    if (!buffer || len == 0 || len > WIFI_PKT_BUF_SIZE) {
-        return ESP_ERR_INVALID_ARG;
+int qemu_wifi_tx_raw(const void *buffer, uint16_t len)
+{
+    if (!buffer || len == 0 || (size_t)len > WIFI_PKT_BUF_SIZE) {
+        return -1;
     }
-
     /* Copy frame into DMA TX buffer */
     memcpy(s_tx_buf, buffer, len);
-
     /* Register TX buffer address (QEMU reads from it on TX_LEN write) */
     wifi_qemu_write(WIFI_REG_TX_ADDR, (uint32_t)(uintptr_t)s_tx_buf);
-
     /* Writing TX_LEN triggers the actual DMA read + transmission */
     wifi_qemu_write(WIFI_REG_TX_LEN, (uint32_t)len);
-
-    ESP_LOGD(TAG, "TX %u bytes", (unsigned)len);
-    return ESP_OK;
+    ESP_LOGD(TAG, "TX %u bytes (raw)", (unsigned)len);
+    return 0;
 }
 
 /* ---------------------------------------------------------------------------
@@ -117,15 +121,14 @@ esp_err_t esp_wifi_netif_init(esp_netif_t *netif)
         ESP_LOGE(TAG, "netif is NULL");
         return ESP_ERR_INVALID_ARG;
     }
+
     esp_err_t ret = esp_netif_set_driver_config(netif, &s_driver_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "set_driver_config failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    /* Register the RX DMA buffer address with QEMU.
-     * Note: this is safe to call redundantly; esp_wifi_netif_register_rx_buf()
-     * may have already been called from esp_wifi_start() for early ARP. */
+    /* Register the RX DMA buffer address with QEMU. */
     wifi_qemu_write(WIFI_REG_RX_ADDR, (uint32_t)(uintptr_t)s_rx_buf);
 
     ESP_LOGI(TAG, "QEMU DMA netif driver installed (tx_buf=%p rx_buf=%p)",

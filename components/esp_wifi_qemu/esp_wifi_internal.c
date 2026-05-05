@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_wifi_types.h"
 #include "esp_private/wifi.h"
+#include "esp_wifi_private.h"
 
 static const char *TAG = "wifi_internal";
 
@@ -50,12 +51,14 @@ esp_err_t esp_wifi_internal_set_sta_ip(void)
 
 /**
  * Free an RX buffer that was passed to the lwIP RX callback.
- * QEMU shim copies frame bytes into the netif pbuf, so the original
- * buffer (if any) is already handled; this is a safe no-op.
+ * When the IDF default wifi driver is in use (no custom qemu_wifi_netif driver),
+ * the netif calls this to release the frame buffer that was passed as 'eb' to
+ * esp_netif_receive().  We malloc the buffer in esp_wifi_netif_rx_frame(), so
+ * free it here.
  */
 void esp_wifi_internal_free_rx_buffer(void *buffer)
 {
-    (void)buffer;
+    free(buffer);
 }
 
 /**
@@ -73,15 +76,19 @@ esp_err_t esp_wifi_internal_reg_netstack_buf_cb(
 
 /**
  * Transmit a raw Ethernet frame via Wi-Fi.
- * The QEMU shim drives TX through the esp_netif driver (qemu_wifi_transmit
- * in esp_wifi_netif.c), so this path is normally not reached.  Return 0 to
- * prevent callers from treating it as a fatal error.
+ * When the IDF default netif driver is in use (e.g. protocol_examples_common
+ * calls esp_wifi_set_default_wifi_sta_handlers), the esp_netif stack calls
+ * this function for TX.  Forward the frame to the QEMU MMIO path so TCP/UDP
+ * traffic is properly relayed regardless of which driver is installed.
  */
 int esp_wifi_internal_tx(wifi_interface_t wifi_if, void *buffer, uint16_t len)
 {
-    (void)wifi_if; (void)buffer; (void)len;
-    ESP_LOGD(TAG, "internal_tx if=%d len=%u (QEMU: no-op, using netif driver)", (int)wifi_if, (unsigned)len);
-    return 0;
+    (void)wifi_if;
+    if (!buffer || len == 0) {
+        return 0;
+    }
+    ESP_LOGD(TAG, "internal_tx if=%d len=%u (QEMU MMIO)", (int)wifi_if, (unsigned)len);
+    return qemu_wifi_tx_raw(buffer, len);
 }
 
 /**

@@ -27,9 +27,8 @@
 #include "freertos/semphr.h"
 
 /* Forward declarations from esp_wifi_netif.c */
-esp_err_t esp_wifi_netif_init(esp_netif_t *netif);
-void      esp_wifi_netif_rx_frame(void);
-void      esp_wifi_netif_register_rx_buf(void);
+void esp_wifi_netif_rx_frame(void);
+void esp_wifi_netif_register_rx_buf(void);
 
 static const char *TAG = "wifi_qemu";
 
@@ -143,35 +142,23 @@ static void wifi_event_task(void *arg)
             break;
         }
         case WIFI_EVT_GOT_IP: {
-            uint32_t ip   = wifi_qemu_read(WIFI_REG_IP_ADDR);
-            uint32_t mask = wifi_qemu_read(WIFI_REG_IP_MASK);
-            uint32_t gw   = wifi_qemu_read(WIFI_REG_IP_GW);
-
-            /* Resolve netif once, cache pointer */
-            if (!s_sta_netif) {
-                s_sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-            }
-            if (s_sta_netif) {
-                esp_netif_ip_info_t ip_info = {};
-                ip_info.ip.addr      = ip;
-                ip_info.netmask.addr = mask;
-                ip_info.gw.addr      = gw;
-                esp_netif_set_ip_info(s_sta_netif, &ip_info);
-
-                /* Install QEMU packet driver now that we have the netif */
-                esp_wifi_netif_init(s_sta_netif);
-            }
-
-            ip_event_got_ip_t got_ip = {
-                .esp_netif  = s_sta_netif,
-                .ip_changed = true,
-            };
-            got_ip.ip_info.ip.addr      = ip;
-            got_ip.ip_info.netmask.addr = mask;
-            got_ip.ip_info.gw.addr      = gw;
-            ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&got_ip.ip_info.ip));
-            esp_event_post(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                           &got_ip, sizeof(got_ip), portMAX_DELAY);
+            /* QEMU mock_wpa writes the IP into MMIO registers; read them for
+             * the debug log only.  We do NOT manually post IP_EVENT_STA_GOT_IP
+             * nor call esp_netif_set_ip_info() here.
+             *
+             * With esp_wifi_internal_tx() now calling qemu_wifi_tx_raw(), DHCP
+             * packets (DISCOVER/REQUEST) are actually sent to QEMU's SLIRP
+             * layer which has a built-in DHCP server.  SLIRP assigns 10.0.2.15
+             * and the normal lwIP DHCP state machine fires IP_EVENT_STA_GOT_IP
+             * via netif_status_callback.  That event properly configures lwIP
+             * routing (netif_set_default etc.) before any socket code runs.
+             *
+             * Previously, firing the event from here was RACING the lwIP task:
+             * example_connect() would unblock before ip4_route() had a valid
+             * route, causing EHOSTUNREACH (errno 118) in tcp_client. */
+            uint32_t ip = wifi_qemu_read(WIFI_REG_IP_ADDR);
+            esp_ip4_addr_t a; a.addr = ip;
+            ESP_LOGI(TAG, "got ip:" IPSTR " (DHCP will fire event)", IP2STR(&a));
             break;
         }
         case WIFI_EVT_DISCONNECTED: {
@@ -260,6 +247,92 @@ esp_err_t esp_wifi_get_mode(wifi_mode_t *mode)
     return ESP_OK;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Late WIFI_EVENT_STA_CONNECTED handler - sets static IP after       */
+/*  IDF default handlers have started (and cleared) DHCP.             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Handler for WIFI_EVENT_STA_CONNECTED, registered AFTER the IDF
+ * default handlers (which start DHCP and clear the netif IP in
+ * esp_netif_dhcpc_start_api lines 1624-1626).
+ *
+ * By registering in esp_wifi_start(), this handler runs LAST among all
+ * STA_CONNECTED handlers in the same event loop dispatch.  At that point
+ * DHCP has been started and the IP has been cleared to 0.0.0.0.
+ *
+ * We read the IP already written to MMIO by the QEMU device (from mock_wpa
+ * STATUS response), stop DHCP, and assign the static IP.  This fires
+ * IP_EVENT_STA_GOT_IP via netif_status_callback (triggered by netif_set_addr
+ * inside esp_netif_set_ip_info_api) before example_connect's semaphore is
+ * given.
+ *
+ * Day-27 bug: the previous approach (setting IP in WIFI_EVT_GOT_IP handler)
+ * raced with the event queue ordering - STA_CONNECTED was processed after
+ * our IP_EVENT_STA_GOT_IP posts, causing DHCP to clear the IP and resulting
+ * in EHOSTUNREACH (errno 118) when tcp_client called connect().
+ */
+static void wifi_qemu_sta_connected_static_ip(void *arg,
+                                              esp_event_base_t base,
+                                              int32_t event_id,
+                                              void *event_data)
+{
+    (void)arg; (void)base; (void)event_id; (void)event_data;
+
+    uint32_t ip   = wifi_qemu_read(WIFI_REG_IP_ADDR);
+    uint32_t mask = wifi_qemu_read(WIFI_REG_IP_MASK);
+    uint32_t gw   = wifi_qemu_read(WIFI_REG_IP_GW);
+
+    if (!ip) {
+        ESP_LOGW(TAG, "WIFI_REG_IP_ADDR is 0 - static IP not yet available");
+        return;
+    }
+
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!netif) {
+        ESP_LOGW(TAG, "WIFI_STA_DEF netif not found");
+        return;
+    }
+
+    /* Cache the netif pointer for esp_wifi_netif_rx_frame() */
+    if (!s_sta_netif) {
+        s_sta_netif = netif;
+    }
+
+    /* Stop DHCP first; in IDF 5.5, esp_netif_set_ip_info_api requires
+     * dhcpc_status == STOPPED (it no longer stops DHCP automatically). */
+    esp_err_t stop_ret = esp_netif_dhcpc_stop(netif);
+    if (stop_ret != ESP_OK &&
+        stop_ret != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        ESP_LOGW(TAG, "dhcpc_stop: %s", esp_err_to_name(stop_ret));
+        /* continue; set_ip_info may still succeed if DHCP is off */
+    }
+
+    /* Assign the static IP from mock_wpa STATUS registers. */
+    esp_netif_ip_info_t ip_info = {};
+    ip_info.ip.addr      = ip;
+    ip_info.netmask.addr = mask;
+    ip_info.gw.addr      = gw;
+    esp_err_t ret = esp_netif_set_ip_info(netif, &ip_info);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "esp_netif_set_ip_info failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    /* netif_status_callback (fired by netif_set_addr inside set_ip_info_api)
+     * already posts IP_EVENT_STA_GOT_IP.  Post one more explicitly so
+     * example_connect's handler fires even if the netif callback is suppressed
+     * (e.g. IP unchanged from a previous run). */
+    ip_event_got_ip_t got_ip = { .esp_netif = netif, .ip_changed = true };
+    got_ip.ip_info.ip.addr      = ip;
+    got_ip.ip_info.netmask.addr = mask;
+    got_ip.ip_info.gw.addr      = gw;
+    esp_ip4_addr_t dbg; dbg.addr = ip;
+    ESP_LOGI(TAG, "static IP assigned:" IPSTR, IP2STR(&dbg));
+    esp_event_post(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                   &got_ip, sizeof(got_ip), portMAX_DELAY);
+}
+
 esp_err_t esp_wifi_start(void)
 {
     ESP_LOGI(TAG, "start (mode=%d)", (int)s_mode);
@@ -271,6 +344,14 @@ esp_err_t esp_wifi_start(void)
     }
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 500);
     if (ret == ESP_OK) {
+        /* Register our late STA_CONNECTED handler AFTER esp_wifi_start().
+         * This ensures it runs after the IDF default handler (registered by
+         * esp_wifi_set_default_wifi_sta_handlers in esp_netif_create_default_
+         * wifi_sta or protocol_examples_common).  The IDF handler starts DHCP
+         * and clears the IP; ours runs afterward to assign the static IP. */
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED,
+                                   wifi_qemu_sta_connected_static_ip, NULL);
+
         /* BUG-002 fix: pre-register RX DMA buffer so QEMU can deliver ARP
          * and DHCP frames before the full netif driver is installed at GOT_IP. */
         esp_wifi_netif_register_rx_buf();
