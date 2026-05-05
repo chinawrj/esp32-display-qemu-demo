@@ -76,12 +76,43 @@ def test_shim_start_handles_ap_mode():
     )
 
 
+def test_shim_start_handles_apsta_mode():
+    """esp_wifi_start() must include APSTA in both AP and STA paths."""
+    shim = (COMPONENT_DIR / "esp_wifi_shim.c").read_text()
+    start_idx = shim.index("esp_err_t esp_wifi_start(void)")
+    stop_idx = shim.index("esp_err_t esp_wifi_stop(void)")
+    start_body = shim[start_idx:stop_idx]
+    assert "WIFI_MODE_APSTA" in start_body
+    assert "ap_enabled" in start_body and "sta_enabled" in start_body
+    assert "WIFI_EVENT_AP_START" in start_body
+    assert "wifi_qemu_send_cmd(WIFI_CMD_START" in start_body
+
+
 def test_shim_stop_handles_ap_mode():
     """esp_wifi_stop() must have an AP-mode branch that emits WIFI_EVENT_AP_STOP."""
     shim = (COMPONENT_DIR / "esp_wifi_shim.c").read_text()
     assert "WIFI_EVENT_AP_STOP" in shim, (
         "esp_wifi_stop() must emit WIFI_EVENT_AP_STOP for AP mode"
     )
+
+
+def test_shim_stop_handles_apsta_mode():
+    """esp_wifi_stop() must include APSTA in both AP and STA paths."""
+    shim = (COMPONENT_DIR / "esp_wifi_shim.c").read_text()
+    stop_idx = shim.index("esp_err_t esp_wifi_stop(void)")
+    stop_body = shim[stop_idx:]
+    assert "WIFI_MODE_APSTA" in stop_body
+    assert "ap_enabled" in stop_body and "sta_enabled" in stop_body
+    assert "WIFI_EVENT_AP_STOP" in stop_body
+    assert "wifi_qemu_send_cmd(WIFI_CMD_STOP" in stop_body
+
+
+def test_run_stock_qemu_softap_profile_exists():
+    """run-stock-qemu.sh must include a softAP verification profile."""
+    runner = (PROJECT_ROOT / "tools" / "run-stock-qemu.sh").read_text()
+    assert "softap)" in runner
+    assert "wifi_init_softap finished" in runner
+    assert "SoftAP ready" in runner
 
 
 # ---------------------------------------------------------------------------

@@ -336,12 +336,17 @@ static void wifi_qemu_sta_connected_static_ip(void *arg,
 esp_err_t esp_wifi_start(void)
 {
     ESP_LOGI(TAG, "start (mode=%d)", (int)s_mode);
-    if (s_mode == WIFI_MODE_AP) {
-        /* AP-mode start is handled locally: no QEMU device involvement. */
+    bool ap_enabled = (s_mode == WIFI_MODE_AP || s_mode == WIFI_MODE_APSTA);
+    bool sta_enabled = (s_mode == WIFI_MODE_STA || s_mode == WIFI_MODE_APSTA);
+
+    if (ap_enabled) {
         esp_event_post(WIFI_EVENT, WIFI_EVENT_AP_START, NULL, 0,
                        portMAX_DELAY);
+    }
+    if (!sta_enabled) {
         return ESP_OK;
     }
+
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 500);
     if (ret == ESP_OK) {
         /* Register our late STA_CONNECTED handler AFTER esp_wifi_start().
@@ -364,11 +369,17 @@ esp_err_t esp_wifi_start(void)
 esp_err_t esp_wifi_stop(void)
 {
     ESP_LOGI(TAG, "stop (mode=%d)", (int)s_mode);
-    if (s_mode == WIFI_MODE_AP) {
+    bool ap_enabled = (s_mode == WIFI_MODE_AP || s_mode == WIFI_MODE_APSTA);
+    bool sta_enabled = (s_mode == WIFI_MODE_STA || s_mode == WIFI_MODE_APSTA);
+
+    if (ap_enabled) {
         esp_event_post(WIFI_EVENT, WIFI_EVENT_AP_STOP, NULL, 0,
                        portMAX_DELAY);
+    }
+    if (!sta_enabled) {
         return ESP_OK;
     }
+
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_STOP, 3000);
     if (ret == ESP_OK) {
         esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_STOP, NULL, 0,
