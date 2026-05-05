@@ -640,6 +640,11 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
     case WIFI_CMD_START:
         if (s->status == WIFI_STATE_IDLE) {
             s->status = WIFI_STATE_STARTED;
+            /* BUG-005 fix: open packet relay early so ARP/DHCP replies
+             * are not dropped in the window between START and CONNECT. */
+            if (s->pkt_fd < 0) {
+                pkt_relay_open(s);
+            }
             esp_wifi_post_event(s, WIFI_EVT_START_DONE);
         } else {
 #if WIFI_WARN
@@ -662,7 +667,7 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
         if (s->status == WIFI_STATE_STARTED) {
             s->conn_state = WPA_CONN_SCAN_SENT;
             wpa_ctrl_send(s, "SCAN");
-            /* Also open packet relay if not already open */
+            /* Relay should already be open from CMD_START; keep fallback. */
             if (s->pkt_fd < 0) {
                 pkt_relay_open(s);
             }

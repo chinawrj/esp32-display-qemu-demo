@@ -43,6 +43,10 @@ wifi_config_t        s_sta_cfg    = {};    /* exported via esp_wifi_private.h */
 static TaskHandle_t  s_evt_task   = NULL;
 esp_netif_t  *s_sta_netif  = NULL;
 
+/* BUG-004 fix: set while wifi_qemu_send_cmd() is polling WIFI_REG_EVENT so
+ * wifi_event_task() backs off and does not steal the synchronous response. */
+static volatile bool s_cmd_in_flight = false;
+
 /* ------------------------------------------------------------------ */
 /*  Forward declarations                                               */
 /* ------------------------------------------------------------------ */
@@ -57,6 +61,9 @@ esp_err_t wifi_qemu_send_cmd(uint32_t cmd, uint32_t timeout_ms)
 {
     ESP_LOGD(TAG, "cmd 0x%02" PRIx32 " timeout=%" PRIu32 "ms", cmd, timeout_ms);
 
+    /* BUG-004 fix: signal to wifi_event_task that we own the EVENT register. */
+    s_cmd_in_flight = true;
+
     /* Write command register */
     wifi_qemu_write(WIFI_REG_CMD, cmd);
 
@@ -67,14 +74,17 @@ esp_err_t wifi_qemu_send_cmd(uint32_t cmd, uint32_t timeout_ms)
         uint32_t evt = wifi_qemu_read(WIFI_REG_EVENT);
         if (evt == WIFI_EVT_ERROR) {
             wifi_qemu_write(WIFI_REG_EVENT, 0); /* ack */
+            s_cmd_in_flight = false;
             return ESP_FAIL;
         }
         if (evt != WIFI_EVT_NONE) {
             wifi_qemu_write(WIFI_REG_EVENT, 0); /* ack */
+            s_cmd_in_flight = false;
             return ESP_OK;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+    s_cmd_in_flight = false;
     ESP_LOGW(TAG, "cmd 0x%02" PRIx32 " timed out", cmd);
     return ESP_ERR_TIMEOUT;
 }
@@ -99,6 +109,14 @@ static void wifi_event_task(void *arg)
 {
     (void)arg;
     for (;;) {
+        /* BUG-004 fix: back off while a synchronous command is polling
+         * WIFI_REG_EVENT.  If we ACK the sync response event here the
+         * calling wifi_qemu_send_cmd() will time-out and return an error. */
+        if (s_cmd_in_flight) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+            continue;
+        }
+
         uint32_t evt = wifi_qemu_read(WIFI_REG_EVENT);
         if (evt == WIFI_EVT_NONE) {
             /* Also fast-path poll for RX frames even without explicit event */

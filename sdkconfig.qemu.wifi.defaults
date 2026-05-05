@@ -1,0 +1,36 @@
+# sdkconfig.qemu.wifi.defaults
+#
+# QEMU virtual Wi-Fi sdkconfig overlay.
+# Append this file to SDKCONFIG_DEFAULTS when building any ESP-IDF Wi-Fi
+# sample against the QEMU Wi-Fi simulator.
+#
+# Usage (idf.py CLI — zero sample file changes):
+#   idf.py \
+#     -DEXTRA_COMPONENT_DIRS=/path/to/components \
+#     -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;/path/to/sdkconfig.qemu.wifi.defaults" \
+#     build
+#
+# Or include via tools/qemu-wifi-overlay.cmake (adds this file automatically).
+
+# ── Primary switch ────────────────────────────────────────────────────────
+# Enable the QEMU virtual Wi-Fi hardware component.
+CONFIG_ESP_WIFI_QEMU=y
+
+# ── QEMU Wi-Fi credentials ────────────────────────────────────────────────
+# The mock wpa_supplicant answers any SSID/password combination, so these
+# are just defaults; override them per-sample if needed.
+CONFIG_DEMO_WIFI_SSID="QEMU_TEST"
+CONFIG_DEMO_WIFI_PASSWORD="qemu1234"
+
+# ── Disable hardware-only features that panic in QEMU ─────────────────────
+# Watchdog resets interfere with QEMU's slower simulation speed.
+CONFIG_ESP_TASK_WDT_EN=n
+# QEMU does not emulate RNG entropy sources; use pseudo-random fallback.
+CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=y
+
+# ── lwIP tuning for QEMU simulation speed ─────────────────────────────────
+# Increase ARP timeout — QEMU + relay round-trips are slower than real HW.
+CONFIG_LWIP_ARP_MAXAGE=30
+# Lenient DHCP client timeout (we inject IP via mock_wpa so DHCP never
+# replies, but dhcpc won't abort if it is disabled or times out gracefully).
+CONFIG_LWIP_DHCP_MAX_NTP_SERVERS=0
