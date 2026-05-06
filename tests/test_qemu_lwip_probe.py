@@ -38,8 +38,9 @@ _MOCK_IP       = "10.0.2.15"
 _MOCK_SSID     = "QEMU_TEST"
 _LWIP_PORT     = int(os.environ.get("LWIP_PROBE_PORT", "9988"))
 
-# Wi-Fi takes ~15 s; probe adds ~5 s; allow generous headroom.
-_BOOT_TIMEOUT_S = 120
+# Day-33: QEMU ESP32 emulation runs ~18x slower than real-time.
+# LVGL benchmark + WiFi connect + TCP probe need ~260 wall-seconds.
+_BOOT_TIMEOUT_S = 360
 
 
 # ---------------------------------------------------------------------------

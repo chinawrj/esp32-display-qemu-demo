@@ -136,6 +136,7 @@ typedef struct ESPWifiState {
     uint32_t            scan_count;
     uint32_t            scan_idx;
     ESPWifiScanResult   scan_results[ESP_WIFI_MAX_SCAN_RESULTS];
+    bool                scan_only;  /**< true when started by WIFI_CMD_SCAN (not CONNECT) */
 
     /* --- wpa_supplicant async I/O --- */
     int         ctrl_fd;            /**< Unix DGRAM ctrl socket, -1 = closed */
@@ -162,9 +163,6 @@ typedef struct ESPWifiState {
     uint8_t     pkt_rx_data[WIFI_PKT_BUF_SIZE]; /**< partial frame data      */
     int         pkt_rx_data_pos;    /**< bytes received into pkt_rx_data      */
     int         pkt_rx_expected;    /**< total frame bytes expected           */
-
-    /* --- Control-flow flags ----------------------------------------------- */
-    bool        scan_only;          /**< true for WIFI_CMD_SCAN (not CONNECT) */
 } ESPWifiState;
 
 /* ---------- wpa_supplicant connection-sequencing state -------------------- */

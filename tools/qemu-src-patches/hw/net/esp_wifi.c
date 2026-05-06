@@ -2,8 +2,8 @@
  * ESP32 Virtual Wi-Fi device — QEMU hardware model
  *
  * Day 10: wpa_supplicant ctrl socket async I/O via GLib GIOChannel.
- * Full CMD_CONNECT flow: ATTACH -> SCAN -> ADD_NETWORK -> SET_NETWORK x2
- * -> SELECT_NETWORK -> CTRL-EVENT-CONNECTED -> STATUS -> EVT_GOT_IP.
+ * Full CMD_CONNECT flow: ATTACH → SCAN → ADD_NETWORK → SET_NETWORK ×2
+ * → SELECT_NETWORK → CTRL-EVENT-CONNECTED → STATUS → EVT_GOT_IP.
  *
  * Protocol spec: docs/qemu-wifi.md
  *
@@ -102,37 +102,10 @@ static void wpa_parse_status(ESPWifiState *s, const char *buf)
         }
     }
 
-    /* Parse gateway from STATUS if provided (mock_wpa_supplicant >= Day 21) */
-    p = strstr(buf, "\ngateway=");
-    if (p) {
-        char gw_str[32] = {0};
-        sscanf(p + 9, "%31[^\n]", gw_str);
-        struct in_addr addr;
-        if (inet_pton(AF_INET, gw_str, &addr) == 1) {
-            s->ip_gw = addr.s_addr;
-        }
-    }
-
-    /* Parse subnet mask from STATUS if provided */
-    p = strstr(buf, "\nsubnet_mask=");
-    if (p) {
-        char mask_str[32] = {0};
-        sscanf(p + 13, "%31[^\n]", mask_str);
-        struct in_addr addr;
-        if (inet_pton(AF_INET, mask_str, &addr) == 1) {
-            s->ip_mask = addr.s_addr;
-        }
-    }
-
-    /* Fallback: derive /24 mask and .1 gateway only if not provided by STATUS.
-     * This preserves backward compatibility with older mock implementations.
-     * New mock assigns 10.0.2.15/24 gw=10.0.2.2 explicitly. */
     if (s->ip_addr && !s->ip_mask) {
-        s->ip_mask = htonl(0xffffff00u);
-    }
-    if (s->ip_addr && !s->ip_gw) {
         uint32_t a = ntohl(s->ip_addr);
-        s->ip_gw = htonl((a & 0xffffff00u) | 1u);
+        s->ip_mask = htonl(0xffffff00u);
+        s->ip_gw   = htonl((a & 0xffffff00u) | 1u);
     }
 }
 
@@ -228,7 +201,7 @@ static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
             s->scan_count = count;
             if (s->scan_only) {
                 s->scan_only = false;
-                s->conn_state = WPA_CONN_IDLE;
+                s->conn_state = WPA_CONN_NONE;
                 esp_wifi_post_event(s, WIFI_EVT_SCAN_DONE);
             } else {
                 s->conn_state = WPA_CONN_ADD_NET_SENT;
@@ -646,11 +619,6 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
     case WIFI_CMD_START:
         if (s->status == WIFI_STATE_IDLE) {
             s->status = WIFI_STATE_STARTED;
-            /* BUG-005 fix: open packet relay early so ARP/DHCP replies
-             * are not dropped in the window between START and CONNECT. */
-            if (s->pkt_fd < 0) {
-                pkt_relay_open(s);
-            }
             esp_wifi_post_event(s, WIFI_EVT_START_DONE);
         } else {
 #if WIFI_WARN
@@ -671,10 +639,9 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
 
     case WIFI_CMD_CONNECT:
         if (s->status == WIFI_STATE_STARTED) {
-            s->scan_only = false;
             s->conn_state = WPA_CONN_SCAN_SENT;
             wpa_ctrl_send(s, "SCAN");
-            /* Relay should already be open from CMD_START; keep fallback. */
+            /* Also open packet relay if not already open */
             if (s->pkt_fd < 0) {
                 pkt_relay_open(s);
             }
@@ -701,12 +668,11 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
         break;
 
     case WIFI_CMD_SCAN:
+        s->scan_only = true;
         if (s->ctrl_fd >= 0) {
-            s->scan_only = true;
             s->conn_state = WPA_CONN_SCAN_SENT;
             wpa_ctrl_send(s, "SCAN");
         } else {
-            s->scan_only = false;
             s->scan_count = 0;
             esp_wifi_post_event(s, WIFI_EVT_SCAN_DONE);
         }
@@ -954,7 +920,6 @@ static void esp_wifi_reset(DeviceState *dev)
     s->ctrl_sock_path_len = 0;
     s->net_id             = -1;
     s->conn_state         = WPA_CONN_NONE;
-    s->scan_only          = false;
     s->tx_len             = 0;
     s->rx_len             = 0;
 

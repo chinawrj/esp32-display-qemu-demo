@@ -50,6 +50,7 @@ LOG_FILE="${LOG_FILE:-/tmp/stock-qemu.log}"
 MOCK_SOCKET="${ESP_WIFI_CTRL_SOCKET:-/tmp/stock-mock-wpa}"
 PKT_SOCKET="${ESP_WIFI_PKT_SOCKET:-/tmp/stock-pkt-relay}"
 TCP_ECHO_PORT="${TCP_ECHO_PORT:-0}"   # 0 = don't start echo server
+UDP_ECHO_PORT="${UDP_ECHO_PORT:-0}"   # 0 = don't start UDP echo server
 
 QEMU_BIN="${QEMU_BIN:-${PROJECT_DIR}/tools/qemu-src/build/qemu-system-xtensa}"
 
@@ -65,12 +66,18 @@ case "$VERIFY_PROFILE" in
         EXPECT_PAT="${EXPECT_PAT:-wifi_init_softap finished|WIFI_EVENT_AP_START|AP_START}"
         SKIP_CONNECTED=1
         ;;
+    tcp_client)
+        EXPECT_PAT="${EXPECT_PAT:-Message sent|Received.*bytes}"
+        ;;
+    udp_client)
+        EXPECT_PAT="${EXPECT_PAT:-Message sent|Received.*bytes}"
+        ;;
     custom)
         EXPECT_PAT="${EXPECT_PAT:-got ip:[0-9]}"
         ;;
     *)
         echo "ERROR: unsupported VERIFY_PROFILE=${VERIFY_PROFILE}" >&2
-        echo "  supported: station, scan, softap, custom" >&2
+        echo "  supported: station, scan, softap, tcp_client, udp_client, custom" >&2
         exit 2
         ;;
 esac
@@ -135,11 +142,13 @@ fi
 MOCK_PID=""
 RELAY_PID=""
 ECHO_PID=""
+UDP_ECHO_PID=""
 
 cleanup() {
-    [ -n "$MOCK_PID"  ] && kill "$MOCK_PID"  2>/dev/null || true
-    [ -n "$RELAY_PID" ] && kill "$RELAY_PID" 2>/dev/null || true
-    [ -n "$ECHO_PID"  ] && kill "$ECHO_PID"  2>/dev/null || true
+    [ -n "$MOCK_PID"      ] && kill "$MOCK_PID"      2>/dev/null || true
+    [ -n "$RELAY_PID"     ] && kill "$RELAY_PID"     2>/dev/null || true
+    [ -n "$ECHO_PID"      ] && kill "$ECHO_PID"      2>/dev/null || true
+    [ -n "$UDP_ECHO_PID"  ] && kill "$UDP_ECHO_PID"  2>/dev/null || true
     rm -f "$MOCK_SOCKET" "$PKT_SOCKET"
 }
 trap cleanup EXIT INT TERM
@@ -170,12 +179,23 @@ RELAY_PID=$!
 sleep 1
 
 # ---------------------------------------------------------------------------
-# Optionally start TCP echo server (for tcp_client / udp_client samples)
+# Optionally start TCP echo server (for tcp_client samples)
 # ---------------------------------------------------------------------------
 if [ "${TCP_ECHO_PORT}" != "0" ]; then
     echo "[run-stock-qemu] Starting TCP echo server on port ${TCP_ECHO_PORT}"
     python3 "${PROJECT_DIR}/tools/tcp_echo_server.py" "${TCP_ECHO_PORT}" &
     ECHO_PID=$!
+    sleep 1
+fi
+
+# ---------------------------------------------------------------------------
+# Optionally start UDP echo server (for udp_client samples)
+# ---------------------------------------------------------------------------
+UDP_ECHO_PID=""
+if [ "${UDP_ECHO_PORT:-0}" != "0" ]; then
+    echo "[run-stock-qemu] Starting UDP echo server on port ${UDP_ECHO_PORT}"
+    python3 "${PROJECT_DIR}/tools/udp_echo_server.py" "${UDP_ECHO_PORT}" &
+    UDP_ECHO_PID=$!
     sleep 1
 fi
 
@@ -242,6 +262,13 @@ case "$VERIFY_PROFILE" in
         ;;
     softap)
         check "SoftAP ready"     "$EXPECT_PAT"
+        ;;
+    tcp_client|udp_client)
+        check "STA started"      "WIFI_EVENT_STA_START|wifi.*start|sta_start"
+        if [ "${SKIP_CONNECTED:-0}" != "1" ]; then
+            check "STA connected" "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap"
+        fi
+        check "Expected log"     "$EXPECT_PAT"
         ;;
 esac
 check "No crash"         "Guru Meditation|abort\(\)" 1

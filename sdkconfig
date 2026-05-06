@@ -436,6 +436,14 @@ CONFIG_DEMO_WIFI_PASSWORD="qemu1234"
 # end of Demo Wi-Fi Configuration
 
 #
+# lwIP Probe Configuration
+#
+CONFIG_DEMO_LWIP_PROBE_ENABLE=y
+CONFIG_DEMO_LWIP_PROBE_HOST="10.0.2.100"
+CONFIG_DEMO_LWIP_PROBE_PORT=9988
+# end of lwIP Probe Configuration
+
+#
 # Virtual Wi-Fi (QEMU)
 #
 CONFIG_ESP_WIFI_QEMU=y

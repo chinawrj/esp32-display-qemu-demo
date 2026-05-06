@@ -17,9 +17,7 @@
 #include "fb_dump.h"
 #include "qemu_vram.h"
 #include "wifi_ui.h"
-#if CONFIG_DEMO_LWIP_PROBE_ENABLE
 #include "lwip_probe.h"
-#endif
 
 static const char *TAG = "app_main";
 
@@ -211,10 +209,7 @@ void app_main(void)
     demo_wifi_start();
 
 #if CONFIG_DEMO_LWIP_PROBE_ENABLE
-    /* NEXT-004: spawn TCP socket probe task — connects to host-side echo server
-     * through wifi_packet_relay.py to prove the full lwIP data plane. */
-    lwip_probe_start(CONFIG_DEMO_LWIP_PROBE_HOST,
-                     (uint16_t)CONFIG_DEMO_LWIP_PROBE_PORT);
+    lwip_probe_start(CONFIG_DEMO_LWIP_PROBE_HOST, CONFIG_DEMO_LWIP_PROBE_PORT);
 #endif
 
     /* Brief LVGL loop to let Wi-Fi events update the status label */

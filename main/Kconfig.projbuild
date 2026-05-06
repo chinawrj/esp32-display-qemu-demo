@@ -15,30 +15,27 @@ menu "Demo Wi-Fi Configuration"
 
 endmenu
 
-menu "Demo lwIP Probe (NEXT-004)"
+menu "lwIP Probe Configuration"
 
     config DEMO_LWIP_PROBE_ENABLE
-        bool "Enable lwIP TCP socket probe after Wi-Fi connect"
+        bool "Enable lwIP probe task (NEXT-004)"
         default y
         help
-            After IP_EVENT_STA_GOT_IP fires, open a TCP connection to
-            DEMO_LWIP_PROBE_HOST:DEMO_LWIP_PROBE_PORT and log
-            "lwip probe ok:" on success.  Used by NEXT-004 acceptance tests.
+            Spawn a background TCP probe task after Wi-Fi connects.
+            Used by QEMU integration tests to validate the full data-plane.
 
     config DEMO_LWIP_PROBE_HOST
-        string "lwIP probe target host"
+        string "Probe target host (IP address)"
         default "10.0.2.100"
         depends on DEMO_LWIP_PROBE_ENABLE
         help
-            IP address of the host-side echo server.  In QEMU SLIRP NAT,
-            10.0.2.100 maps to 127.0.0.1 on the host.
+            IPv4 address of the TCP echo server launched by the test harness.
 
     config DEMO_LWIP_PROBE_PORT
-        int "lwIP probe target port"
+        int "Probe target port"
         default 9988
         depends on DEMO_LWIP_PROBE_ENABLE
         help
-            TCP port of the host-side echo server started alongside QEMU
-            by tools/run-direct-demo.sh (or pytest fixture).
+            TCP port of the echo server (tools/echo_server.py).
 
 endmenu

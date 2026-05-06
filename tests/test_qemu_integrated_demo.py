@@ -37,8 +37,9 @@ _MOCK_SOCKET = "/tmp/mock-wpa-integrated-demo"
 _MOCK_IP = "10.0.2.15"
 _MOCK_SSID = "QEMU_TEST"
 
-# The benchmark runs ~7 s; Wi-Fi starts after; allow generous headroom.
-_BOOT_TIMEOUT_S = 90
+# Day-33: QEMU ESP32 emulation runs ~18x slower than real-time.
+# The LVGL benchmark + WiFi connect need ~210 wall-seconds.
+_BOOT_TIMEOUT_S = 260
 
 
 # ---------------------------------------------------------------------------
