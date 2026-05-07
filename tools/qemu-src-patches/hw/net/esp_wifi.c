@@ -856,6 +856,12 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
 
     case WIFI_CMD_CONNECT:
         if (s->status == WIFI_STATE_STARTED) {
+            /* The pre-connect SCAN must NOT be treated as a scan_only          *
+             * request: WIFI_CMD_SCAN may have left scan_only=true from a       *
+             * previous startup scan; if we don't clear it here, SCAN_RESULTS   *
+             * will short-circuit to SCAN_DONE and we'll never reach            *
+             * ADD_NETWORK / SELECT_NETWORK / GOT_IP.                           */
+            s->scan_only = false;
             s->conn_state = WPA_CONN_SCAN_SENT;
             wpa_ctrl_send(s, "SCAN");
             /* Also open packet relay if not already open */
