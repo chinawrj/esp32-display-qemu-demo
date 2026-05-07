@@ -191,28 +191,43 @@ returns empty. Stock `softAP` example expects to log
 needs a fake station injector (or two QEMU instances cross-connected
 via `wifi_packet_relay.py`).
 
+#### Day-45 progress (firmware-only slice — committed)
+
+- [x] `esp_wifi_ap.c` keeps a real `s_ap_table[ESP_WIFI_MAX_CONN_NUM]`
+      with MAC / AID / RSSI / phy_mode entries.
+- [x] `esp_wifi_start()` injects `CONFIG_ESP_WIFI_QEMU_AP_FAKE_CLIENTS`
+      synthetic stations on AP/APSTA mode start, posting a
+      `WIFI_EVENT_AP_STACONNECTED` event for each (deterministic
+      locally-administered MACs `02:51:45:00:00:NN`, AID = NN+1).
+- [x] `esp_wifi_ap_get_sta_list()` walks the table; `esp_wifi_deauth_sta`
+      removes entries (or all when `aid==0`) and posts
+      `WIFI_EVENT_AP_STADISCONNECTED`; `esp_wifi_ap_get_sta_aid` does
+      a real MAC lookup.
+- [x] Stock `examples/wifi/getting_started/softAP/` runtime:
+      `station 02:51:45:00:00:00 join, AID=1` and `AID=2` log lines
+      now fire — first time ever.
+- [x] Kconfig adds `ESP_WIFI_QEMU_AP_FAKE_CLIENTS` (range 0..4,
+      default 2). 0 keeps the legacy empty-AP behaviour.
+
+#### Day-46 remaining work
+
 #### Subtasks
 
-1. **v1 — single-instance fake station**: `wifi_packet_relay.py`
-   accepts a CLI option `--ap-fake-clients=2` that, after the AP starts,
-   sends two `STACONNECTED` events with deterministic fake MACs +
-   AIDs through the QEMU control socket. `esp_wifi_ap_get_sta_list`
-   then iterates this device-side table.
-2. **v1 DHCP server**: relay implements a tiny DHCP server (UDP/67)
-   handing 192.168.4.2 / 192.168.4.3 leases to those fake MACs.
-   Fires `IP_EVENT_AP_STAIPASSIGNED`.
-3. New MMIO: `WIFI_REG_AP_STA_COUNT`, `WIFI_REG_AP_STA_IDX`,
-   `WIFI_REG_AP_STA_MAC0/1`, `WIFI_REG_AP_STA_AID`, `WIFI_REG_AP_STA_RSSI`.
-4. `esp_wifi_deauth_sta(aid)` writes a deauth command; relay drops
-   that fake client.
-5. Pytest: assert `softAP` log contains `station … join` and the
+1. **v1 DHCP server**: extend `wifi_packet_relay.py` with a tiny DHCP
+   server (UDP/67) that hands `192.168.4.2 / .3` leases to the fake
+   MACs and fires `IP_EVENT_AP_STAIPASSIGNED`.
+2. (Optional) cross-instance: add `--ap-fake-clients=N` CLI to the
+   relay so it can drive the join events from the host side instead
+   of firmware-injected.
+3. Pytest: assert `softAP` log contains `station … join` and the
    subsequent `IPASSIGNED` line.
 
 #### Acceptance
 
-- [ ] Stock `softAP` runtime: `Found %d stations` reports 2.
-- [ ] `wifi_ap_get_sta_list` returns 2 entries with non-zero MACs.
-- [ ] `IP_EVENT_AP_STAIPASSIGNED` fires twice.
+- [x] Stock `softAP` runtime: `wifi_ap_get_sta_list` reports 2 entries
+      with non-zero MACs.
+- [x] `WIFI_EVENT_AP_STACONNECTED` fires twice with deterministic AIDs.
+- [ ] `IP_EVENT_AP_STAIPASSIGNED` fires twice (Day-46 DHCP work).
 
 ---
 

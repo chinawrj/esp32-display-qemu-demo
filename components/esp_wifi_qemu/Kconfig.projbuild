@@ -12,4 +12,17 @@ menu "Virtual Wi-Fi (QEMU)"
             when building for QEMU, so defaulting to y means no sdkconfig
             change is needed in stock samples.
 
+    config ESP_WIFI_QEMU_AP_FAKE_CLIENTS
+        int "Fake AP clients to inject on softAP start"
+        depends on ESP_WIFI_QEMU
+        range 0 4
+        default 2
+        help
+            When the firmware starts in AP or APSTA mode, the QEMU shim
+            posts this many synthetic WIFI_EVENT_AP_STACONNECTED events
+            with deterministic MACs (02:QE:00:00:00:NN) and AID = NN+1.
+            Stock softAP samples then log the join messages and
+            esp_wifi_ap_get_sta_list returns these entries.  Set to 0 to
+            keep the AP empty (legacy behaviour).
+
 endmenu

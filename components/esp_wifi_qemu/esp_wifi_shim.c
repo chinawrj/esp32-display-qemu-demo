@@ -315,6 +315,15 @@ esp_err_t esp_wifi_start(void)
                         tskIDLE_PRIORITY + 2, &s_evt_task);
         }
         esp_event_post(WIFI_EVENT, WIFI_EVENT_AP_START, NULL, 0, portMAX_DELAY);
+
+        /* Day-45: fabricate fake associated stations so stock softAP
+         * samples produce real join logs and ap_get_sta_list is non-empty. */
+        qemu_wifi_ap_clear_stations();
+#ifdef CONFIG_ESP_WIFI_QEMU_AP_FAKE_CLIENTS
+        for (uint8_t i = 0; i < CONFIG_ESP_WIFI_QEMU_AP_FAKE_CLIENTS; ++i) {
+            qemu_wifi_ap_inject_fake_station(i);
+        }
+#endif
     }
 
     return ESP_OK;

@@ -701,6 +701,52 @@ class TestSourceFiles:
         sf_body = src[sf_idx:sf_idx + 400]
         assert "s_promisc_filter = *filter" in sf_body
 
+    def test_phase_d_ap_sta_table_real_entries(self):
+        """Phase-D: SoftAP keeps a real station table; deauth & AID lookup work."""
+        ap = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_ap.c"
+        src = ap.read_text()
+        # No more "always returns empty list" comment / hard-zero behaviour.
+        assert "s_ap_table" in src, "AP station table missing"
+        assert "qemu_wifi_ap_inject_fake_station" in src, (
+            "fake-station injector missing"
+        )
+        # ap_get_sta_list must iterate s_ap_table, not blanket-zero.
+        gl_idx = src.find("esp_wifi_ap_get_sta_list(wifi_sta_list_t")
+        assert gl_idx != -1
+        gl_body = src[gl_idx:gl_idx + 800]
+        assert "info->num = n;" in gl_body, (
+            "ap_get_sta_list must report real station count"
+        )
+        assert "s_ap_table[i].mac" in gl_body
+        # deauth_sta must remove from table and post STADISCONNECTED.
+        de_idx = src.find("esp_wifi_deauth_sta(uint16_t")
+        assert de_idx != -1
+        de_body = src[de_idx:de_idx + 1500]
+        assert "WIFI_EVENT_AP_STADISCONNECTED" in de_body
+        assert "in_use = false" in de_body
+        # ap_get_sta_aid must do real MAC lookup, not always return NOT_FOUND.
+        ai_idx = src.find("esp_wifi_ap_get_sta_aid(const uint8_t")
+        assert ai_idx != -1
+        ai_body = src[ai_idx:ai_idx + 600]
+        assert "qemu_ap_find_by_mac" in ai_body, (
+            "ap_get_sta_aid must search the table"
+        )
+
+    def test_phase_d_ap_start_injects_fake_clients(self):
+        """Phase-D: esp_wifi_start AP path must call the injector."""
+        shim = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_shim.c"
+        src = shim.read_text()
+        assert "qemu_wifi_ap_clear_stations" in src
+        assert "qemu_wifi_ap_inject_fake_station" in src
+        assert "CONFIG_ESP_WIFI_QEMU_AP_FAKE_CLIENTS" in src
+
+    def test_phase_d_kconfig_fake_clients_option(self):
+        """Phase-D: Kconfig exposes ESP_WIFI_QEMU_AP_FAKE_CLIENTS option."""
+        kc = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "Kconfig.projbuild"
+        src = kc.read_text()
+        assert "ESP_WIFI_QEMU_AP_FAKE_CLIENTS" in src
+        assert "range 0 4" in src
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)
