@@ -59,6 +59,10 @@ static uint8_t            s_protocol[QEMU_WIFI_IF_COUNT] = {
 static wifi_bandwidth_t   s_bandwidth[QEMU_WIFI_IF_COUNT] = {
     WIFI_BW_HT20, WIFI_BW_HT20,
 };
+/* Day-44 Phase-C: power save / event mask / per-iface inactive time. */
+static wifi_ps_type_t     s_ps_type        = WIFI_PS_MIN_MODEM;  /* IDF default */
+static uint32_t           s_event_mask     = WIFI_EVENT_MASK_AP_PROBEREQRECVED;
+static uint16_t           s_inactive_time[QEMU_WIFI_IF_COUNT] = { 0, 0 };
 
 /* Convert an 802.11 channel-centre frequency in MHz to a primary channel
  * number.  Returns 0 if the frequency is not in a recognised band. */
@@ -106,7 +110,13 @@ esp_err_t esp_wifi_restore(void)
 
 esp_err_t esp_wifi_set_ps(wifi_ps_type_t type)
 {
-    ESP_LOGD(TAG, "set_ps(%d) — no-op in QEMU", type);
+    if (type != WIFI_PS_NONE      &&
+        type != WIFI_PS_MIN_MODEM &&
+        type != WIFI_PS_MAX_MODEM) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_ps_type = type;
+    ESP_LOGD(TAG, "set_ps(%d)", type);
     return ESP_OK;
 }
 
@@ -115,8 +125,8 @@ esp_err_t esp_wifi_get_ps(wifi_ps_type_t *type)
     if (!type) {
         return ESP_ERR_INVALID_ARG;
     }
-    *type = WIFI_PS_NONE;
-    ESP_LOGD(TAG, "get_ps() → WIFI_PS_NONE (QEMU)");
+    *type = s_ps_type;
+    ESP_LOGD(TAG, "get_ps() → %d", *type);
     return ESP_OK;
 }
 
@@ -357,7 +367,8 @@ esp_err_t esp_wifi_sta_get_rssi(int *rssi)
 
 esp_err_t esp_wifi_set_event_mask(uint32_t mask)
 {
-    ESP_LOGD(TAG, "set_event_mask(0x%08" PRIx32 ") — no-op in QEMU", mask);
+    s_event_mask = mask;
+    ESP_LOGD(TAG, "set_event_mask(0x%08" PRIx32 ")", mask);
     return ESP_OK;
 }
 
@@ -366,7 +377,7 @@ esp_err_t esp_wifi_get_event_mask(uint32_t *mask)
     if (!mask) {
         return ESP_ERR_INVALID_ARG;
     }
-    *mask = WIFI_EVENT_MASK_NONE;
+    *mask = s_event_mask;
     return ESP_OK;
 }
 
@@ -376,16 +387,26 @@ esp_err_t esp_wifi_get_event_mask(uint32_t *mask)
 
 esp_err_t esp_wifi_set_inactive_time(wifi_interface_t ifx, uint16_t sec)
 {
-    ESP_LOGD(TAG, "set_inactive_time(ifx=%d, %u) — no-op in QEMU", ifx, sec);
+    if ((unsigned)ifx >= QEMU_WIFI_IF_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* IDF docs: STA-side allows 10..65535s; 0 means "keep current". */
+    if (sec != 0 && sec < 10) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (sec != 0) {
+        s_inactive_time[ifx] = sec;
+    }
+    ESP_LOGD(TAG, "set_inactive_time(ifx=%d, %u)", ifx, sec);
     return ESP_OK;
 }
 
 esp_err_t esp_wifi_get_inactive_time(wifi_interface_t ifx, uint16_t *sec)
 {
-    if (!sec) {
+    if (!sec || (unsigned)ifx >= QEMU_WIFI_IF_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
-    *sec = 300;
+    *sec = s_inactive_time[ifx];
     return ESP_OK;
 }
 

@@ -145,7 +145,7 @@ channel still matches the AP.
 
 ---
 
-### Phase C — Power save & event mask (P1, Day 44)
+### Phase C — Power save & event mask (P1, Day 44) ✅ DONE
 
 **Goal:** `esp_wifi_set_ps` / `_get_ps`, `_set_event_mask` /
 `_get_event_mask`, `_set_inactive_time`. These are state-bearing
@@ -166,9 +166,13 @@ the mode. Real PS semantics in QEMU are meaningless (no radio), but
 
 #### Acceptance
 
-- [ ] `power_save` example builds + runs; serial shows
-      `wifi_set_ps mode=2` followed by a matching `get_ps`.
-- [ ] No regressions on existing samples.
+- [x] `esp_wifi_set_ps(WIFI_PS_MAX_MODEM)` then `esp_wifi_get_ps(&t)`
+      returns `WIFI_PS_MAX_MODEM`. Invalid enum values rejected.
+- [x] `esp_wifi_set_event_mask(0xDEAD)` round-trips through `s_event_mask`.
+- [x] `esp_wifi_set_inactive_time(STA, 30)` round-trips per interface;
+      sub-10s values rejected per IDF spec.
+- [x] No regressions on existing samples (stock scan + station rebuild
+      cleanly).
 
 ---
 

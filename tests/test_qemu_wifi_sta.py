@@ -600,6 +600,72 @@ class TestSourceFiles:
             "get_bandwidth must not hardcode HT20"
         )
 
+    # ----- Day-44 Phase-C: power save / event mask / inactive time -----------
+
+    def test_phase_c_ps_round_trip_storage(self):
+        """Phase-C: power-save type setter stores; getter returns stored value."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_ps_type" in src, "power-save storage missing"
+        set_idx = src.find("esp_wifi_set_ps(wifi_ps_type_t type)")
+        assert set_idx != -1
+        body = src[set_idx:set_idx + 500]
+        # Must validate the enum range.
+        assert "WIFI_PS_MIN_MODEM" in body and "WIFI_PS_MAX_MODEM" in body, (
+            "set_ps must validate against the IDF wifi_ps_type_t enum"
+        )
+        assert "s_ps_type = type" in body, (
+            "set_ps must store the supplied type"
+        )
+        get_idx = src.find("esp_wifi_get_ps(wifi_ps_type_t *type)")
+        assert get_idx != -1
+        get_body = src[get_idx:get_idx + 300]
+        assert "*type = WIFI_PS_NONE;" not in get_body, (
+            "get_ps must not hardcode WIFI_PS_NONE"
+        )
+        assert "*type = s_ps_type" in get_body
+
+    def test_phase_c_event_mask_round_trip_storage(self):
+        """Phase-C: event_mask setter stores; getter returns stored value."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_event_mask" in src, "event_mask storage missing"
+        set_idx = src.find("esp_wifi_set_event_mask(uint32_t mask)")
+        assert set_idx != -1
+        body = src[set_idx:set_idx + 300]
+        assert "s_event_mask = mask" in body, (
+            "set_event_mask must store the mask"
+        )
+        get_idx = src.find("esp_wifi_get_event_mask(uint32_t *mask)")
+        assert get_idx != -1
+        get_body = src[get_idx:get_idx + 300]
+        assert "*mask = WIFI_EVENT_MASK_NONE;" not in get_body, (
+            "get_event_mask must not hardcode WIFI_EVENT_MASK_NONE"
+        )
+        assert "*mask = s_event_mask" in get_body
+
+    def test_phase_c_inactive_time_per_interface_storage(self):
+        """Phase-C: inactive_time stored per interface; minimum 10s validation."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_inactive_time[" in src, "per-iface inactive_time storage missing"
+        set_idx = src.find("esp_wifi_set_inactive_time(wifi_interface_t ifx")
+        assert set_idx != -1
+        body = src[set_idx:set_idx + 500]
+        assert "sec < 10" in body, (
+            "set_inactive_time must reject sub-10s values"
+        )
+        assert "s_inactive_time[ifx]" in body, (
+            "set_inactive_time must store per-interface"
+        )
+        get_idx = src.find("esp_wifi_get_inactive_time(wifi_interface_t ifx")
+        assert get_idx != -1
+        get_body = src[get_idx:get_idx + 300]
+        assert "*sec = 300;" not in get_body, (
+            "get_inactive_time must not hardcode 300"
+        )
+        assert "*sec = s_inactive_time[ifx]" in get_body
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)
