@@ -307,8 +307,18 @@ static gboolean esp_wifi_ctrl_read_cb(GIOChannel *chan,
     return TRUE;
 }
 
+/* Forward declaration needed by wpa_ctrl_open (idempotent reopen). */
+static void wpa_ctrl_close(ESPWifiState *s);
+
 static void wpa_ctrl_open(ESPWifiState *s)
 {
+    /* Day-34: close any stale connection first so wpa_ctrl_open is idempotent.
+     * Without this, repeated WIFI_CMD_INIT calls leak fds and accumulate
+     * orphaned GLib watches that fire on every future broadcast event. */
+    if (s->ctrl_fd >= 0) {
+        wpa_ctrl_close(s);
+    }
+
     char ctrl_path[108] = {0};
     if (s->ctrl_sock_path_len > 0 && s->ctrl_sock_path[0] != '\0') {
         snprintf(ctrl_path, sizeof(ctrl_path), "%.*s",

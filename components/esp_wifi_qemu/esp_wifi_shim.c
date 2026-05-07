@@ -176,11 +176,11 @@ esp_err_t esp_wifi_init(const wifi_init_config_t *config)
     esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_INIT, 2000);
     if (ret == ESP_OK) {
         s_inited = true;
-        /* Start the async event dispatch task */
-        if (!s_evt_task) {
-            xTaskCreate(wifi_event_task, "wifi_evt", 4096, NULL,
-                        tskIDLE_PRIORITY + 2, &s_evt_task);
-        }
+        /* NOTE: wifi_event_task is started in esp_wifi_start() — AFTER all
+         * synchronous commands (INIT, SET_MODE, START) are done.  Starting
+         * the task here at tskIDLE_PRIORITY+2 (> app_main priority 1) would
+         * race with wifi_qemu_send_cmd() for WIFI_EVT_INIT_DONE/START_DONE,
+         * causing those commands to time out. */
     }
     return ret;
 }
@@ -286,6 +286,13 @@ esp_err_t esp_wifi_start(void)
 
         esp_err_t ret = wifi_qemu_send_cmd(WIFI_CMD_START, 500);
         if (ret == ESP_OK) {
+            /* Start async event dispatch task NOW — after all synchronous
+             * commands (INIT, SET_MODE, START) have been ACK'd.  Starting
+             * it earlier would race for WIFI_EVT_INIT_DONE / START_DONE. */
+            if (!s_evt_task) {
+                xTaskCreate(wifi_event_task, "wifi_evt", 4096, NULL,
+                            tskIDLE_PRIORITY + 2, &s_evt_task);
+            }
             esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START, NULL, 0, portMAX_DELAY);
         } else {
             ESP_LOGW(TAG, "esp_wifi_start STA: %s (0x%x) — continuing in QEMU",
@@ -294,6 +301,11 @@ esp_err_t esp_wifi_start(void)
     }
 
     if (ap_enabled) {
+        /* For AP mode without STA, also start the event task if not running */
+        if (!s_evt_task) {
+            xTaskCreate(wifi_event_task, "wifi_evt", 4096, NULL,
+                        tskIDLE_PRIORITY + 2, &s_evt_task);
+        }
         esp_event_post(WIFI_EVENT, WIFI_EVENT_AP_START, NULL, 0, portMAX_DELAY);
     }
 

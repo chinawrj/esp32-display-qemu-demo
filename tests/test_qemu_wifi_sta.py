@@ -284,6 +284,77 @@ class TestSourceFiles:
         doc = PROJECT_ROOT / "docs" / "qemu-wifi.md"
         assert doc.is_file(), f"Missing protocol spec: {doc}"
 
+    def test_event_task_started_in_esp_wifi_start_not_init(self):
+        """wifi_event_task must be created inside esp_wifi_start(), not esp_wifi_init().
+
+        Day-35 fix: starting the FreeRTOS task from esp_wifi_init() at
+        tskIDLE_PRIORITY+2 races with wifi_qemu_send_cmd() for
+        WIFI_EVT_INIT_DONE / WIFI_EVT_START_DONE because the task preempts
+        the send_cmd polling loop, causing those commands to time out.
+        """
+        shim = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_shim.c"
+        src = shim.read_text()
+
+        # Locate esp_wifi_init and esp_wifi_start function bodies
+        init_start  = src.index("esp_err_t esp_wifi_init(")
+        init_end    = src.index("esp_err_t esp_wifi_deinit(")
+        start_start = src.index("esp_err_t esp_wifi_start(")
+        start_end   = src.index("esp_err_t esp_wifi_stop(")
+
+        init_body  = src[init_start:init_end]
+        start_body = src[start_start:start_end]
+
+        assert "xTaskCreate(wifi_event_task" not in init_body, (
+            "wifi_event_task must NOT be created inside esp_wifi_init() — "
+            "doing so races with wifi_qemu_send_cmd() for INIT_DONE/START_DONE."
+        )
+        assert "xTaskCreate(wifi_event_task" in start_body, (
+            "wifi_event_task must be created inside esp_wifi_start() after "
+            "WIFI_CMD_START has been acknowledged."
+        )
+
+    def test_qemu_wpa_ctrl_open_is_idempotent(self):
+        """wpa_ctrl_open() must close a stale fd before opening a new one.
+
+        Day-35 fix: without this guard, repeated WIFI_CMD_INIT calls leak
+        file descriptors and accumulate orphaned GLib IO watches that fire
+        spuriously on every future broadcast event.
+        """
+        src = ESP_WIFI_PATCH_C.read_text()
+        open_start = src.index("static void wpa_ctrl_open(ESPWifiState *s)")
+        # Find the first closing brace after the open — locate end of function
+        open_body_start = src.index("{", open_start)
+        depth = 0
+        idx = open_body_start
+        for idx, ch in enumerate(src[open_body_start:], start=open_body_start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+        open_body = src[open_body_start:idx + 1]
+
+        assert "ctrl_fd >= 0" in open_body, (
+            "wpa_ctrl_open() must check ctrl_fd >= 0 and close a stale "
+            "connection before opening a new one."
+        )
+        assert "wpa_ctrl_close(s)" in open_body, (
+            "wpa_ctrl_open() must call wpa_ctrl_close() when ctrl_fd >= 0."
+        )
+
+    def test_qemu_wpa_ctrl_close_forward_declared(self):
+        """wpa_ctrl_close must be forward-declared before wpa_ctrl_open calls it."""
+        src = ESP_WIFI_PATCH_C.read_text()
+        fwd_decl = "static void wpa_ctrl_close(ESPWifiState *s);"
+        open_def = "static void wpa_ctrl_open(ESPWifiState *s)"
+        assert fwd_decl in src, (
+            "wpa_ctrl_close must have a forward declaration before wpa_ctrl_open."
+        )
+        assert src.index(fwd_decl) < src.index(open_def), (
+            "Forward declaration of wpa_ctrl_close must appear before wpa_ctrl_open."
+        )
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

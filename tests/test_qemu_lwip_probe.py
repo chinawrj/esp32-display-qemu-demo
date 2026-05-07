@@ -305,8 +305,9 @@ class TestLwipProbeRuntime:
                     "-drive", f"file={EFUSE_BIN},if=none,format=raw,id=efuse",
                     "-global", "driver=nvram.esp32.efuse,property=drive,value=efuse",
                     "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
-                    "-display", "none",
-                    "-serial", "stdio",
+                    # Day-34: -serial stdio + stdin=DEVNULL kills serial output.
+                    # Use -nographic so guest serial always goes to stdout.
+                    "-nographic",
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
