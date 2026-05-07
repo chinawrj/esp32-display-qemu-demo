@@ -419,3 +419,64 @@ def test_run_real_wifi_supports_sudo_mode():
     assert "sudo" in script, (
         "run-real-wifi.sh must be able to run QEMU under sudo when WIFI_SUDO=1"
     )
+
+
+# ---------------------------------------------------------------------------
+# Real-scan (Day 39): mock_wpa_supplicant --real-scan uses nmcli
+# ---------------------------------------------------------------------------
+
+def test_mock_has_real_scan_flag():
+    """mock_wpa_supplicant.py must accept --real-scan CLI flag."""
+    mock = TOOLS_DIR / "mock_wpa_supplicant.py"
+    src = mock.read_text()
+    assert "--real-scan" in src, (
+        "mock_wpa_supplicant.py must expose --real-scan argparse flag"
+    )
+    assert "real_scan" in src, (
+        "mock_wpa_supplicant.py must store real_scan attribute"
+    )
+
+
+def test_mock_real_scan_calls_nmcli():
+    """_nmcli_to_wpa_scan_results() must invoke nmcli for real AP list."""
+    mock = TOOLS_DIR / "mock_wpa_supplicant.py"
+    src = mock.read_text()
+    assert "_nmcli_to_wpa_scan_results" in src, (
+        "mock must define _nmcli_to_wpa_scan_results() helper"
+    )
+    assert "nmcli" in src, (
+        "_nmcli_to_wpa_scan_results must call nmcli"
+    )
+    assert "SSID,BSSID,FREQ,SIGNAL,SECURITY" in src, (
+        "nmcli call must request SSID, BSSID, FREQ, SIGNAL, SECURITY fields"
+    )
+
+
+def test_mock_real_scan_converts_signal_to_dbm():
+    """mock must convert nmcli quality (0-100) to dBm."""
+    mock = TOOLS_DIR / "mock_wpa_supplicant.py"
+    src = mock.read_text()
+    # The conversion formula: dBm = (quality // 2) - 100
+    assert "// 2) - 100" in src or "/ 2) - 100" in src, (
+        "mock must convert nmcli signal quality to dBm with (quality/2)-100"
+    )
+
+
+def test_mock_real_scan_deduplicates_bssids():
+    """mock must deduplicate APs by BSSID (nmcli lists same AP multiple times)."""
+    mock = TOOLS_DIR / "mock_wpa_supplicant.py"
+    src = mock.read_text()
+    assert "seen" in src and "seen.add" in src, (
+        "mock real-scan must track seen BSSIDs to avoid duplicates"
+    )
+
+
+def test_run_stock_qemu_exposes_real_scan_env():
+    """run-stock-qemu.sh must pass --real-scan to mock when REAL_SCAN=1."""
+    script = (TOOLS_DIR / "run-stock-qemu.sh").read_text()
+    assert "REAL_SCAN" in script, (
+        "run-stock-qemu.sh must support REAL_SCAN env var"
+    )
+    assert "--real-scan" in script, (
+        "run-stock-qemu.sh must pass --real-scan flag to mock_wpa_supplicant.py"
+    )

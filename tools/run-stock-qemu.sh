@@ -51,6 +51,7 @@ MOCK_SOCKET="${ESP_WIFI_CTRL_SOCKET:-/tmp/stock-mock-wpa}"
 PKT_SOCKET="${ESP_WIFI_PKT_SOCKET:-/tmp/stock-pkt-relay}"
 TCP_ECHO_PORT="${TCP_ECHO_PORT:-0}"   # 0 = don't start echo server
 UDP_ECHO_PORT="${UDP_ECHO_PORT:-0}"   # 0 = don't start UDP echo server
+REAL_SCAN="${REAL_SCAN:-0}"           # 1 = mock returns real nmcli AP list
 
 QEMU_BIN="${QEMU_BIN:-${PROJECT_DIR}/tools/qemu-src/build/qemu-system-xtensa}"
 
@@ -159,13 +160,16 @@ trap cleanup EXIT INT TERM
 # ---------------------------------------------------------------------------
 # Start mock wpa_supplicant
 # ---------------------------------------------------------------------------
-echo "[run-stock-qemu] Starting mock_wpa_supplicant (SSID=${WIFI_SSID}, IP=${MOCK_IP})"
+MOCK_REAL_SCAN_FLAG=""
+[ "${REAL_SCAN}" = "1" ] && MOCK_REAL_SCAN_FLAG="--real-scan"
+echo "[run-stock-qemu] Starting mock_wpa_supplicant (SSID=${WIFI_SSID}, IP=${MOCK_IP}, real_scan=${REAL_SCAN})"
 python3 "${PROJECT_DIR}/tools/mock_wpa_supplicant.py" \
     --ctrl-path "$MOCK_SOCKET" \
     --ssid      "$WIFI_SSID"   \
     --ip        "$MOCK_IP" \
     --gateway   "10.0.2.2" \
-    --netmask   "255.255.255.0" &
+    --netmask   "255.255.255.0" \
+    ${MOCK_REAL_SCAN_FLAG} &
 MOCK_PID=$!
 sleep 1
 
