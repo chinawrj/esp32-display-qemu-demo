@@ -35,6 +35,7 @@
 #define WIFI_REG_SCAN_SSID_BASE 0x0a4  /**< SSID bytes of selected result     */
 #define WIFI_REG_SCAN_BSSID0    0x0c4  /**< BSSID bytes 0–3                   */
 #define WIFI_REG_SCAN_BSSID1    0x0c8  /**< BSSID bytes 4–5 in [31:16]        */
+#define WIFI_REG_SCAN_FREQ      0x0cc  /**< Frequency MHz of selected result  */
 #define WIFI_REG_CTRL_SOCK_LEN  0x0d0  /**< ctrl socket path length           */
 #define WIFI_REG_CTRL_SOCK_BASE 0x0d4  /**< ctrl socket path bytes (64 bytes) */
 
@@ -47,7 +48,12 @@
 #define WIFI_REG_TX_LEN         0x118  /**< Write Ethernet frame length (1–1514 bytes) to trigger TX */
 #define WIFI_REG_RX_ADDR        0x11c  /**< Write guest-physical addr of RX buffer (once at init) */
 #define WIFI_REG_RX_LEN         0x120  /**< Non-zero = RX frame ready; write 0 to consume */
-/* IO range 0x000–0x123 is safe: RNG device lives at +0x144, never conflicts */
+/* Day-41 scan-result detail registers (parsed from wpa_cli flags) */
+#define WIFI_REG_SCAN_AUTHMODE        0x124  /**< wifi_auth_mode_t (u8)        */
+#define WIFI_REG_SCAN_PAIRWISE_CIPHER 0x128  /**< wifi_cipher_type_t (u8)      */
+#define WIFI_REG_SCAN_GROUP_CIPHER    0x12c  /**< wifi_cipher_type_t (u8)      */
+#define WIFI_REG_SCAN_FLAG_BITS       0x130  /**< bit0 = WPS supported         */
+/* IO range 0x000–0x133 is safe: RNG device lives at +0x144, never conflicts */
 #define WIFI_PKT_BUF_SIZE       1516   /**< Max Ethernet frame bytes (handles 1514) */
 
 /* ---------- Command codes (write to WIFI_REG_CMD) -------------------------- */

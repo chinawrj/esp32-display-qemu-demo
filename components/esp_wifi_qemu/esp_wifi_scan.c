@@ -83,8 +83,26 @@ esp_err_t esp_wifi_scan_get_ap_records(uint16_t *number, wifi_ap_record_t *ap_re
         memcpy(ap_records[i].bssid, &b0, 4);
         ap_records[i].bssid[4] = (uint8_t)((b1 >> 24) & 0xff);
         ap_records[i].bssid[5] = (uint8_t)((b1 >> 16) & 0xff);
-        ap_records[i].authmode = WIFI_AUTH_WPA2_PSK;
-        ap_records[i].primary  = 1;
+
+        /* Day-41: real authmode / cipher / channel from QEMU device */
+        uint32_t freq = wifi_qemu_read(WIFI_REG_SCAN_FREQ);
+        uint8_t  channel;
+        if (freq >= 2412 && freq <= 2472) {
+            channel = (uint8_t)((freq - 2407) / 5);   /* 2.4 GHz ch 1–13  */
+        } else if (freq == 2484) {
+            channel = 14;
+        } else if (freq >= 5160 && freq <= 5885) {
+            channel = (uint8_t)((freq - 5000) / 5);   /* 5 GHz ch 32–177 */
+        } else {
+            channel = 1;
+        }
+        ap_records[i].primary         = channel;
+        ap_records[i].second          = WIFI_SECOND_CHAN_NONE;
+        ap_records[i].authmode        = (wifi_auth_mode_t)wifi_qemu_read(WIFI_REG_SCAN_AUTHMODE);
+        ap_records[i].pairwise_cipher = (wifi_cipher_type_t)wifi_qemu_read(WIFI_REG_SCAN_PAIRWISE_CIPHER);
+        ap_records[i].group_cipher    = (wifi_cipher_type_t)wifi_qemu_read(WIFI_REG_SCAN_GROUP_CIPHER);
+        uint32_t flag_bits            = wifi_qemu_read(WIFI_REG_SCAN_FLAG_BITS);
+        ap_records[i].wps             = (flag_bits & 0x1) ? 1 : 0;
     }
     *number = total;
     return ESP_OK;

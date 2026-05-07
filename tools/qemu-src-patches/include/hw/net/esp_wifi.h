@@ -25,9 +25,9 @@
 #define ESP_WIFI_VERSION_MINOR  0
 
 /* ---------- MMIO size ----------------------------------------------------- */
-/* 0x124 bytes: covers all control regs + 4 DMA pointer regs.                */
-/* MUST stay < 0x144 to avoid overlapping the RNG device at WDEV_BASE+0x144. */
-#define ESP_WIFI_IO_SIZE        0x124
+/* 0x134 bytes: covers all control regs + 4 DMA pointer regs + 4 scan-detail */
+/* regs (Day-41).  MUST stay < 0x144 to avoid the RNG device at WDEV+0x144.  */
+#define ESP_WIFI_IO_SIZE        0x134
 
 /* ---------- Packet buffer size (DMA transfer, no MMIO buffer needed) ------- */
 #define WIFI_PKT_BUF_SIZE       1516    /* handles Ethernet max 1514 bytes   */
@@ -54,6 +54,7 @@
 #define WIFI_REG_SCAN_SSID_BASE 0x0a4   /* 32 bytes, 8 regs  */
 #define WIFI_REG_SCAN_BSSID0    0x0c4
 #define WIFI_REG_SCAN_BSSID1    0x0c8
+#define WIFI_REG_SCAN_FREQ      0x0cc   /* u32: frequency in MHz of selected result */
 #define WIFI_REG_CTRL_SOCK_LEN  0x0d0
 #define WIFI_REG_CTRL_SOCK_BASE 0x0d4   /* 64 bytes, 16 regs */
 
@@ -65,7 +66,12 @@
 #define WIFI_REG_TX_LEN         0x118   /* u32: write frame len to trigger TX; 0=idle */
 #define WIFI_REG_RX_ADDR        0x11c   /* u32: guest-physical addr of RX buf */
 #define WIFI_REG_RX_LEN         0x120   /* u32: non-zero = frame ready; write 0 to consume */
-/* Range 0x000–0x123 ✓  RNG lives at +0x144, safely out of our MMIO region */
+/* Day-41: scan-result detail registers (parsed from wpa_cli flags string) */
+#define WIFI_REG_SCAN_AUTHMODE        0x124  /* u8 wifi_auth_mode_t */
+#define WIFI_REG_SCAN_PAIRWISE_CIPHER 0x128  /* u8 wifi_cipher_type_t */
+#define WIFI_REG_SCAN_GROUP_CIPHER    0x12c  /* u8 wifi_cipher_type_t */
+#define WIFI_REG_SCAN_FLAG_BITS       0x130  /* bit0 = WPS supported */
+/* Range 0x000–0x133 ✓  RNG lives at +0x144, safely out of our MMIO region */
 
 /* ---------- Command codes (write to WIFI_REG_CMD) ------------------------- */
 #define WIFI_CMD_INIT           0x01
@@ -109,6 +115,11 @@ typedef struct ESPWifiScanResult {
     uint8_t  ssid[32];
     uint8_t  ssid_len;
     int8_t   rssi;
+    uint16_t freq;              /* MHz                                */
+    uint8_t  authmode;          /* wifi_auth_mode_t                   */
+    uint8_t  pairwise_cipher;   /* wifi_cipher_type_t                 */
+    uint8_t  group_cipher;      /* wifi_cipher_type_t                 */
+    uint8_t  flag_bits;         /* bit0 = WPS supported               */
 } ESPWifiScanResult;
 
 typedef struct ESPWifiState {

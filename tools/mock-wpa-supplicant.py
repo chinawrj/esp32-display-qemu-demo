@@ -13,9 +13,13 @@ wpa_supplicant ctrl commands used by the QEMU esp_wifi device:
 """
 
 import argparse
+import grp
 import os
+import re
+import shlex
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -27,7 +31,10 @@ class MockWpaSupplicant:
     def __init__(self, ctrl_path, ssid="TestAP", password="testpass",
                  ip="10.0.2.15", mac="02:00:00:00:00:01",
                  gateway="10.0.2.2", netmask="255.255.255.0",
-                 scan_delay=0.1, connect_delay=0.3):
+                 scan_delay=0.1, connect_delay=0.3,
+                 real_scan=False,
+                 wpa_ctrl_dir="/var/run/wpa_supplicant",
+                 wpa_iface=None):
         self.ctrl_path    = ctrl_path
         self.ssid         = ssid
         self.password     = password
@@ -37,6 +44,10 @@ class MockWpaSupplicant:
         self.netmask      = netmask
         self.scan_delay   = scan_delay
         self.connect_delay = connect_delay
+        self.real_scan    = real_scan
+        self._real_scan_cache = None   # populated on first SCAN
+        self.wpa_ctrl_dir = wpa_ctrl_dir
+        self.wpa_iface    = wpa_iface or self._auto_detect_iface()
 
         self._sock        = None
         self._running     = False
@@ -79,6 +90,88 @@ class MockWpaSupplicant:
 
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _auto_detect_iface() -> str:
+        """Return the first wireless interface found via 'ip link', or 'wlo1'."""
+        try:
+            out = subprocess.check_output(
+                ["ip", "-o", "link", "show"],
+                stderr=subprocess.DEVNULL, timeout=5,
+            ).decode()
+            for line in out.splitlines():
+                m = re.match(r'^\d+:\s+(wl\S+?)(?:@\S+)?:', line)
+                if m:
+                    return m.group(1)
+        except Exception:
+            pass
+        return "wlo1"
+
+    @staticmethod
+    def _need_sg_netdev() -> bool:
+        """Return True if the 'netdev' group is not active in this process.
+
+        wpa_supplicant's ctrl dir (/var/run/wpa_supplicant) is owned by group
+        netdev (mode 0750).  If we were just added to the group we need 'sg
+        netdev' until the user starts a new login session.
+        """
+        try:
+            netdev_gid = grp.getgrnam("netdev").gr_gid
+            return netdev_gid not in os.getgroups()
+        except KeyError:
+            return False
+
+    @staticmethod
+    def _run_wpa_cli(ctrl_dir: str, iface: str, *args) -> str:
+        """Run wpa_cli command; use 'sg netdev' if group not yet active."""
+        cmd = ["/usr/sbin/wpa_cli", "-p", ctrl_dir, "-i", iface] + list(args)
+        if MockWpaSupplicant._need_sg_netdev():
+            cmd_str = " ".join(shlex.quote(c) for c in cmd)
+            return subprocess.check_output(
+                ["sg", "netdev", "-c", cmd_str],
+                stderr=subprocess.DEVNULL, timeout=10,
+            ).decode(errors="replace")
+        return subprocess.check_output(
+            cmd, stderr=subprocess.DEVNULL, timeout=10,
+        ).decode(errors="replace")
+
+    @staticmethod
+    def _wpa_cli_scan_results(ctrl_dir: str, iface: str) -> str:
+        """Trigger a real scan on the Wi-Fi card and return results directly
+        from wpa_supplicant in its native tab-separated format:
+          bssid / frequency / signal level / flags / ssid
+        No unit conversion needed — wpa_supplicant already reports dBm.
+        """
+        # Trigger a fresh scan (may return FAIL under NetworkManager — OK,
+        # we will still read the most-recent cached results).
+        try:
+            MockWpaSupplicant._run_wpa_cli(ctrl_dir, iface, "scan")
+            time.sleep(5)   # allow full 2.4 + 5 GHz channel sweep
+        except Exception:
+            pass
+
+        try:
+            raw = MockWpaSupplicant._run_wpa_cli(ctrl_dir, iface, "scan_results")
+        except Exception as e:
+            print(f"[mock-wpa] wpa_cli scan_results failed: {e}", flush=True)
+            return "bssid / frequency / signal level / flags / ssid\n"
+
+        # Proxy wpa_cli output; deduplicate by BSSID just in case.
+        lines_out = []
+        seen = set()
+        for line in raw.splitlines():
+            if line.startswith("bssid"):
+                lines_out.append(line)
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 5:
+                bssid = parts[0].strip().upper()
+                if bssid and bssid not in seen:
+                    seen.add(bssid)
+                    lines_out.append(line)
+
+        print(f"[mock-wpa] wpa_cli scan: {len(lines_out) - 1} AP(s)", flush=True)
+        return "\n".join(lines_out) + "\n"
+
     def _send_to(self, client_path, msg: str):
         try:
             self._sock.sendto(msg.encode(), client_path)
@@ -113,11 +206,21 @@ class MockWpaSupplicant:
             return "OK\n"
 
         if cmd == "SCAN":
+            if self.real_scan:
+                # Fetch real APs from wpa_supplicant so SCAN_RESULTS is ready
+                self._real_scan_cache = self._wpa_cli_scan_results(
+                    self.wpa_ctrl_dir, self.wpa_iface)
             self._delayed_event(self.scan_delay, "<3>CTRL-EVENT-SCAN-RESULTS \n")
             return "OK\n"
 
         if cmd == "SCAN_RESULTS":
-            # Return a single fake AP
+            if self.real_scan:
+                # Return cached results (populated during SCAN handling)
+                if self._real_scan_cache is None:
+                    self._real_scan_cache = self._wpa_cli_scan_results(
+                        self.wpa_ctrl_dir, self.wpa_iface)
+                return self._real_scan_cache
+            # Default: single fake AP for backward-compat / offline use
             return (
                 "bssid / frequency / signal level / flags / ssid\n"
                 f"aa:bb:cc:dd:ee:ff\t2412\t-50\t[WPA2-PSK-CCMP]\t{self.ssid}\n"
@@ -205,6 +308,12 @@ def main():
                         help="Seconds before SCAN-RESULTS event (default 0.1)")
     parser.add_argument("--connect-delay", type=float, default=0.3,
                         help="Seconds before CONNECTED event (default 0.3)")
+    parser.add_argument("--real-scan", action="store_true", default=False,
+                        help="Use real wpa_supplicant/Wi-Fi card scan instead of hardcoded fake AP")
+    parser.add_argument("--wpa-ctrl-dir", default="/var/run/wpa_supplicant",
+                        help="wpa_supplicant ctrl directory (default: /var/run/wpa_supplicant)")
+    parser.add_argument("--wpa-iface", default=None,
+                        help="Wi-Fi interface name (default: auto-detect)")
     args = parser.parse_args()
 
     daemon = MockWpaSupplicant(
@@ -217,6 +326,9 @@ def main():
         netmask=args.netmask,
         scan_delay=args.scan_delay,
         connect_delay=args.connect_delay,
+        real_scan=args.real_scan,
+        wpa_ctrl_dir=args.wpa_ctrl_dir,
+        wpa_iface=args.wpa_iface,
     )
 
     def _sig(signum, frame):

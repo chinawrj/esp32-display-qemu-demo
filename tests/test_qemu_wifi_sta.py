@@ -382,6 +382,59 @@ class TestSourceFiles:
             "WIFI_EVENT_STA_START post, not before"
         )
 
+    def test_scan_get_ap_records_uses_real_authmode(self):
+        """Day-41: esp_wifi_scan_get_ap_records must read real authmode/cipher
+        and channel from MMIO, not hardcode them."""
+        scan_c = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_scan.c"
+        src = scan_c.read_text()
+        # Old hardcoded values must be gone
+        assert "ap_records[i].authmode = WIFI_AUTH_WPA2_PSK;" not in src, (
+            "authmode must not be hardcoded to WIFI_AUTH_WPA2_PSK"
+        )
+        assert "ap_records[i].primary  = 1;" not in src, (
+            "primary channel must not be hardcoded to 1"
+        )
+        # Must read all four new MMIO regs
+        for reg in ("WIFI_REG_SCAN_FREQ", "WIFI_REG_SCAN_AUTHMODE",
+                    "WIFI_REG_SCAN_PAIRWISE_CIPHER", "WIFI_REG_SCAN_GROUP_CIPHER"):
+            assert reg in src, f"esp_wifi_scan.c must read {reg}"
+        # Must populate all new fields on wifi_ap_record_t
+        for field in ("authmode", "pairwise_cipher", "group_cipher", "primary"):
+            assert f"ap_records[i].{field}" in src, (
+                f"esp_wifi_scan.c must set ap_records[i].{field}"
+            )
+
+    def test_scan_freq_to_channel_conversion(self):
+        """Day-41: firmware must convert MHz frequency to channel number."""
+        scan_c = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_scan.c"
+        src = scan_c.read_text()
+        # 2.4 GHz: ch = (freq - 2407) / 5
+        assert "(freq - 2407)" in src, (
+            "scan code must convert 2.4 GHz freq to channel via (freq-2407)/5"
+        )
+        # 5 GHz: ch = (freq - 5000) / 5
+        assert "(freq - 5000)" in src, (
+            "scan code must convert 5 GHz freq to channel via (freq-5000)/5"
+        )
+
+    def test_qemu_device_parses_wpa_flags(self):
+        """Day-41: QEMU device must parse wpa_cli flags string into authmode/cipher."""
+        wifi_c = PROJECT_ROOT / "tools" / "qemu-src-patches" / "hw" / "net" / "esp_wifi.c"
+        src = wifi_c.read_text()
+        assert "parse_wpa_flags" in src, (
+            "QEMU device must define parse_wpa_flags() helper"
+        )
+        # Must distinguish WPA1/WPA2/WPA3
+        for token in ("WPA3", "WPA2", "EAP", "WEP", "WPS", "CCMP", "TKIP"):
+            assert token in src, f"parse_wpa_flags must recognize '{token}' token"
+        # ESPWifiScanResult must store the new fields
+        h = PROJECT_ROOT / "tools" / "qemu-src-patches" / "include" / "hw" / "net" / "esp_wifi.h"
+        h_src = h.read_text()
+        for field in ("freq", "authmode", "pairwise_cipher", "group_cipher", "flag_bits"):
+            assert field in h_src, (
+                f"ESPWifiScanResult struct must have {field} field"
+            )
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

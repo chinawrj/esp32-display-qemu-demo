@@ -122,6 +122,105 @@ static gboolean esp_wifi_post_got_ip_cb(gpointer data)
     return FALSE;
 }
 
+/* ---------- Day-41: parse wpa_cli flags string -> authmode + ciphers ----- */
+/* Mirrors ESP-IDF wifi_auth_mode_t / wifi_cipher_type_t enum values.        */
+#define ESP_WIFI_AUTH_OPEN              0
+#define ESP_WIFI_AUTH_WEP               1
+#define ESP_WIFI_AUTH_WPA_PSK           2
+#define ESP_WIFI_AUTH_WPA2_PSK          3
+#define ESP_WIFI_AUTH_WPA_WPA2_PSK      4
+#define ESP_WIFI_AUTH_WPA2_ENTERPRISE   5
+#define ESP_WIFI_AUTH_WPA3_PSK          6
+#define ESP_WIFI_AUTH_WPA2_WPA3_PSK     7
+#define ESP_WIFI_AUTH_OWE               9
+
+#define ESP_WIFI_CIPHER_NONE            0
+#define ESP_WIFI_CIPHER_WEP40           1
+#define ESP_WIFI_CIPHER_WEP104          2
+#define ESP_WIFI_CIPHER_TKIP            3
+#define ESP_WIFI_CIPHER_CCMP            4
+#define ESP_WIFI_CIPHER_TKIP_CCMP       5
+
+static void parse_wpa_flags(const char *flags, ESPWifiScanResult *r)
+{
+    /* wpa_cli scan_results "flags" examples:
+     *   [WPA2-PSK-CCMP][WPS][ESS]
+     *   [WPA-PSK-CCMP+TKIP][WPA2-PSK-CCMP+TKIP][WPS][ESS]
+     *   [WPA2-EAP-CCMP][ESS]
+     *   [WPA2-PSK-CCMP][WPA3-PSK-CCMP][ESS]
+     *   [WEP][ESS]
+     *   [ESS]                        <- open
+     *   [OWE][ESS]
+     */
+    bool has_wpa1  = false, has_wpa2 = false, has_wpa3 = false;
+    bool has_eap   = false, has_wep  = false, has_owe  = false;
+    bool has_wps   = false;
+    bool has_ccmp  = false, has_tkip = false;
+
+    /* WPA tokens: detect WPA3, WPA2, then WPA1 (longest first). */
+    if (strstr(flags, "WPA3") || strstr(flags, "SAE")) { has_wpa3 = true; }
+    if (strstr(flags, "WPA2"))                          { has_wpa2 = true; }
+    /* WPA1 token "WPA-" not "WPA2-" / "WPA3-". */
+    {
+        const char *p = flags;
+        while ((p = strstr(p, "WPA")) != NULL) {
+            if (p[3] == '-') { has_wpa1 = true; break; }
+            p += 3;
+        }
+    }
+    if (strstr(flags, "EAP")) { has_eap = true; }
+    if (strstr(flags, "[WEP")) { has_wep = true; }
+    if (strstr(flags, "OWE")) { has_owe = true; }
+    if (strstr(flags, "WPS")) { has_wps = true; }
+    if (strstr(flags, "CCMP")) { has_ccmp = true; }
+    if (strstr(flags, "TKIP")) { has_tkip = true; }
+
+    /* Authmode resolution (priority: WPA3 > Enterprise > WPA2 > WPA1 > WEP > OWE > Open) */
+    uint8_t am;
+    if (has_wpa3 && has_wpa2) {
+        am = ESP_WIFI_AUTH_WPA2_WPA3_PSK;
+    } else if (has_wpa3) {
+        am = ESP_WIFI_AUTH_WPA3_PSK;
+    } else if (has_wpa2 && has_eap) {
+        am = ESP_WIFI_AUTH_WPA2_ENTERPRISE;
+    } else if (has_wpa1 && has_wpa2) {
+        am = ESP_WIFI_AUTH_WPA_WPA2_PSK;
+    } else if (has_wpa2) {
+        am = ESP_WIFI_AUTH_WPA2_PSK;
+    } else if (has_wpa1) {
+        am = ESP_WIFI_AUTH_WPA_PSK;
+    } else if (has_wep) {
+        am = ESP_WIFI_AUTH_WEP;
+    } else if (has_owe) {
+        am = ESP_WIFI_AUTH_OWE;
+    } else {
+        am = ESP_WIFI_AUTH_OPEN;
+    }
+    r->authmode = am;
+
+    /* Cipher (pairwise == group for our purposes; wpa_cli flags don't
+     * really separate them).  Open = NONE.  WEP key length unknown ->
+     * report WEP40 by convention (firmware just uses it for display). */
+    uint8_t cipher;
+    if (am == ESP_WIFI_AUTH_OPEN || am == ESP_WIFI_AUTH_OWE) {
+        cipher = ESP_WIFI_CIPHER_NONE;
+    } else if (am == ESP_WIFI_AUTH_WEP) {
+        cipher = ESP_WIFI_CIPHER_WEP40;
+    } else if (has_ccmp && has_tkip) {
+        cipher = ESP_WIFI_CIPHER_TKIP_CCMP;
+    } else if (has_ccmp) {
+        cipher = ESP_WIFI_CIPHER_CCMP;
+    } else if (has_tkip) {
+        cipher = ESP_WIFI_CIPHER_TKIP;
+    } else {
+        cipher = ESP_WIFI_CIPHER_CCMP;   /* sensible default for WPA-anything */
+    }
+    r->pairwise_cipher = cipher;
+    r->group_cipher    = cipher;
+
+    r->flag_bits = has_wps ? 0x01 : 0x00;
+}
+
 static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
 {
     (void)len;
@@ -174,6 +273,12 @@ static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
 
     case WPA_CONN_SCAN_RESULTS_SENT:
         {
+            /* Stale ACK from a previous in-flight SCAN may arrive while we are
+             * waiting for the SCAN_RESULTS dump.  Ignore "OK"/"FAIL" replies
+             * that don't carry the expected "bssid / frequency / ..." header. */
+            if (strstr(buf, "bssid /") == NULL) {
+                break;
+            }
             uint32_t count = 0;
             const char *line = buf;
             line = strchr(line, '\n');
@@ -193,6 +298,8 @@ static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
                     r->rssi     = (int8_t)rssi;
                     r->ssid_len = (uint8_t)MIN(strlen(ssid), 32);
                     memcpy(r->ssid, ssid, r->ssid_len);
+                    r->freq     = (uint16_t)freq;
+                    parse_wpa_flags(flags, r);
                     count++;
                 }
                 line = strchr(line, '\n');
@@ -798,6 +905,31 @@ static uint64_t esp_wifi_read(void *opaque, hwaddr addr, unsigned int size)
         if (s->scan_idx < s->scan_count) {
             r = ((uint32_t)s->scan_results[s->scan_idx].bssid[4] << 24) |
                 ((uint32_t)s->scan_results[s->scan_idx].bssid[5] << 16);
+        }
+        break;
+    case WIFI_REG_SCAN_FREQ:
+        if (s->scan_idx < s->scan_count) {
+            r = s->scan_results[s->scan_idx].freq;
+        }
+        break;
+    case WIFI_REG_SCAN_AUTHMODE:
+        if (s->scan_idx < s->scan_count) {
+            r = s->scan_results[s->scan_idx].authmode;
+        }
+        break;
+    case WIFI_REG_SCAN_PAIRWISE_CIPHER:
+        if (s->scan_idx < s->scan_count) {
+            r = s->scan_results[s->scan_idx].pairwise_cipher;
+        }
+        break;
+    case WIFI_REG_SCAN_GROUP_CIPHER:
+        if (s->scan_idx < s->scan_count) {
+            r = s->scan_results[s->scan_idx].group_cipher;
+        }
+        break;
+    case WIFI_REG_SCAN_FLAG_BITS:
+        if (s->scan_idx < s->scan_count) {
+            r = s->scan_results[s->scan_idx].flag_bits;
         }
         break;
     case WIFI_REG_CTRL_SOCK_LEN: r = s->ctrl_sock_path_len; break;
