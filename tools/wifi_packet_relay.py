@@ -577,15 +577,52 @@ async def run_server(sock_path: str):
 
 
 def main():
-    sock_path = None
-    if len(sys.argv) > 1:
-        sock_path = sys.argv[1]
+    import argparse as _argparse
+    parser = _argparse.ArgumentParser(
+        description="QEMU ESP32 Wi-Fi packet relay daemon",
+        formatter_class=_argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Mock mode (default):\n"
+            "  wifi_packet_relay.py /tmp/pkt-relay\n\n"
+            "Real-WiFi passthrough mode:\n"
+            "  wifi_packet_relay.py /tmp/pkt-relay --gateway-ip 192.168.1.1 --no-local-map\n"
+            "  (point ESP_WIFI_CTRL_SOCKET at the real wpa_supplicant socket)"
+        ),
+    )
+    parser.add_argument(
+        "socket_path", nargs="?", default=None,
+        help="Unix socket path (overrides $ESP_WIFI_PKT_SOCKET)",
+    )
+    parser.add_argument(
+        "--gateway-ip", metavar="IP", default=None,
+        help=(
+            "Override gateway IP the relay responds to for ARP. "
+            "Default: 10.0.2.2 (SLIRP mock mode). "
+            "Set to your real router IP for real-WiFi passthrough mode."
+        ),
+    )
+    parser.add_argument(
+        "--no-local-map", action="store_true",
+        help=(
+            "Disable local-host IP mapping (10.0.2.x → 127.0.0.1). "
+            "Required for real-WiFi passthrough mode so packets are "
+            "forwarded to real destinations instead of localhost."
+        ),
+    )
+    args = parser.parse_args()
+
+    sock_path = args.socket_path or os.environ.get("ESP_WIFI_PKT_SOCKET", "")
     if not sock_path:
-        sock_path = os.environ.get("ESP_WIFI_PKT_SOCKET", "")
-    if not sock_path:
-        print("Usage: wifi_packet_relay.py <socket_path>", file=sys.stderr)
-        print("   or: set ESP_WIFI_PKT_SOCKET", file=sys.stderr)
-        sys.exit(1)
+        parser.error("socket_path argument or $ESP_WIFI_PKT_SOCKET required")
+
+    # Apply real-WiFi overrides before the event loop starts
+    global GATEWAY_IP, LOCAL_HOST_MAP
+    if args.gateway_ip:
+        GATEWAY_IP = args.gateway_ip
+        log.info(f"Gateway IP overridden to {GATEWAY_IP}")
+    if args.no_local_map:
+        LOCAL_HOST_MAP = {}
+        log.info("Local-host IP mapping disabled (real-WiFi passthrough mode)")
 
     log.info(f"Starting Wi-Fi packet relay on {sock_path}")
     asyncio.run(run_server(sock_path))

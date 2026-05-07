@@ -358,3 +358,64 @@ def test_scan_start_has_result_count_fallback():
     )
     assert "WIFI_EVT_SCAN_DONE" in content
     assert "ESP_ERR_TIMEOUT" in content
+
+
+# ---------------------------------------------------------------------------
+# Real wpa_supplicant passthrough mode (Day 37)
+# ---------------------------------------------------------------------------
+
+def test_run_real_wifi_script_exists():
+    """run-real-wifi.sh must exist and be executable."""
+    script = TOOLS_DIR / "run-real-wifi.sh"
+    assert script.exists(), f"run-real-wifi.sh not found at {script}"
+    assert script.stat().st_mode & 0o111, "run-real-wifi.sh is not executable"
+
+
+def test_relay_accepts_gateway_ip_flag():
+    """wifi_packet_relay.py must accept --gateway-ip flag."""
+    relay = TOOLS_DIR / "wifi_packet_relay.py"
+    src = relay.read_text()
+    assert "--gateway-ip" in src, (
+        "wifi_packet_relay.py must accept --gateway-ip for real-WiFi mode"
+    )
+    assert "GATEWAY_IP = args.gateway_ip" in src or "GATEWAY_IP = args.gateway_ip" in src or \
+           "args.gateway_ip" in src, (
+        "wifi_packet_relay.py must apply --gateway-ip to override GATEWAY_IP"
+    )
+
+
+def test_relay_accepts_no_local_map_flag():
+    """wifi_packet_relay.py must accept --no-local-map flag."""
+    relay = TOOLS_DIR / "wifi_packet_relay.py"
+    src = relay.read_text()
+    assert "--no-local-map" in src, (
+        "wifi_packet_relay.py must accept --no-local-map for real-WiFi mode"
+    )
+    assert "LOCAL_HOST_MAP = {}" in src, (
+        "wifi_packet_relay.py must clear LOCAL_HOST_MAP when --no-local-map is set"
+    )
+
+
+def test_run_real_wifi_uses_real_wpa_socket():
+    """run-real-wifi.sh must point QEMU at the real wpa_supplicant socket."""
+    script = (TOOLS_DIR / "run-real-wifi.sh").read_text()
+    assert "wpa_supplicant" in script.lower(), (
+        "run-real-wifi.sh must reference the wpa_supplicant socket path"
+    )
+    assert "ESP_WIFI_CTRL_SOCKET" in script, (
+        "run-real-wifi.sh must export ESP_WIFI_CTRL_SOCKET pointing at real wpa_supplicant"
+    )
+    assert "no-local-map" in script, (
+        "run-real-wifi.sh must pass --no-local-map to wifi_packet_relay.py"
+    )
+
+
+def test_run_real_wifi_supports_sudo_mode():
+    """run-real-wifi.sh must support WIFI_SUDO=1 for root-only socket access."""
+    script = (TOOLS_DIR / "run-real-wifi.sh").read_text()
+    assert "WIFI_SUDO" in script, (
+        "run-real-wifi.sh must support WIFI_SUDO env var for elevated access"
+    )
+    assert "sudo" in script, (
+        "run-real-wifi.sh must be able to run QEMU under sudo when WIFI_SUDO=1"
+    )
