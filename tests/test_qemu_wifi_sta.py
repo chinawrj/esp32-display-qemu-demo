@@ -435,6 +435,70 @@ class TestSourceFiles:
                 f"ESPWifiScanResult struct must have {field} field"
             )
 
+    def test_sta_get_ap_info_no_hardcoded_fake(self):
+        """Day-42 Phase-A: esp_wifi_sta_get_ap_info must not return s_fake_ap."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_fake_ap" not in src, (
+            "esp_wifi_sta_get_ap_info must not return a hardcoded s_fake_ap struct"
+        )
+        assert "QEMU_TEST" not in src, (
+            "esp_wifi_extras.c must not embed the QEMU_TEST SSID literal"
+        )
+        # Must read connected-AP regs from MMIO
+        for reg in ("WIFI_REG_CONN_BSSID0", "WIFI_REG_CONN_BSSID1",
+                    "WIFI_REG_CONN_FREQ_RSSI_AUTH", "WIFI_REG_CONN_CIPHERS"):
+            assert reg in src, (
+                f"esp_wifi_extras.c sta_get_ap_info must read {reg}"
+            )
+
+    def test_sta_get_rssi_no_hardcoded_minus_50(self):
+        """Day-42 Phase-A: esp_wifi_sta_get_rssi must derive from MMIO, not hardcode -50."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        # The function body around sta_get_rssi must not assign *rssi = -50.
+        idx = src.find("esp_wifi_sta_get_rssi")
+        assert idx != -1
+        body = src[idx:idx + 600]
+        assert "*rssi = -50" not in body, (
+            "esp_wifi_sta_get_rssi must not hardcode -50 dBm"
+        )
+        assert "WIFI_REG_CONN_FREQ_RSSI_AUTH" in body, (
+            "esp_wifi_sta_get_rssi must read WIFI_REG_CONN_FREQ_RSSI_AUTH"
+        )
+
+    def test_qemu_device_parses_wpa_status_fields(self):
+        """Day-42 Phase-A: wpa_parse_status must populate connected_ap fields."""
+        wifi_c = PROJECT_ROOT / "tools" / "qemu-src-patches" / "hw" / "net" / "esp_wifi.c"
+        src = wifi_c.read_text()
+        # Must parse the new STATUS tokens.
+        for tok in ('"bssid="', '"\\nssid="', '"\\nfreq="',
+                    '"signal_level="', '"\\nkey_mgmt="',
+                    '"\\npairwise_cipher="', '"\\ngroup_cipher="'):
+            assert tok in src, f"wpa_parse_status must look for {tok}"
+        # connected_ap must be referenced in the parser.
+        assert "connected_ap" in src, (
+            "wpa_parse_status must populate s->connected_ap"
+        )
+        # MMIO read cases for the new regs must exist.
+        for reg in ("WIFI_REG_CONN_BSSID0", "WIFI_REG_CONN_BSSID1",
+                    "WIFI_REG_CONN_FREQ_RSSI_AUTH", "WIFI_REG_CONN_CIPHERS"):
+            assert f"case {reg}" in src, (
+                f"esp_wifi.c read handler must serve {reg}"
+            )
+
+    def test_connected_ap_cleared_on_disconnect(self):
+        """Day-42 Phase-A: disconnect must zero the connected_ap record."""
+        wifi_c = PROJECT_ROOT / "tools" / "qemu-src-patches" / "hw" / "net" / "esp_wifi.c"
+        src = wifi_c.read_text()
+        # Find the CTRL-EVENT-DISCONNECTED block and ensure it memsets.
+        idx = src.find("CTRL-EVENT-DISCONNECTED")
+        assert idx != -1
+        block = src[idx:idx + 400]
+        assert "memset(&s->connected_ap" in block, (
+            "Disconnect handler must zero s->connected_ap"
+        )
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

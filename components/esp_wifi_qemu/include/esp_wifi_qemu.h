@@ -53,7 +53,12 @@
 #define WIFI_REG_SCAN_PAIRWISE_CIPHER 0x128  /**< wifi_cipher_type_t (u8)      */
 #define WIFI_REG_SCAN_GROUP_CIPHER    0x12c  /**< wifi_cipher_type_t (u8)      */
 #define WIFI_REG_SCAN_FLAG_BITS       0x130  /**< bit0 = WPS supported         */
-/* IO range 0x000–0x133 is safe: RNG device lives at +0x144, never conflicts */
+/* Day-42 Phase-A: connection-time AP record (parsed from wpa_cli STATUS) */
+#define WIFI_REG_CONN_BSSID0          0x134  /**< BSSID bytes 0..3            */
+#define WIFI_REG_CONN_BSSID1          0x138  /**< BSSID bytes 4..5 in [31:16] */
+#define WIFI_REG_CONN_FREQ_RSSI_AUTH  0x13c  /**< freq[15:0]|rssi[23:16]|auth[31:24] */
+#define WIFI_REG_CONN_CIPHERS         0x140  /**< pairwise[7:0]|group[15:8]   */
+/* IO range 0x000–0x143 is safe: RNG device lives at +0x144, never conflicts */
 #define WIFI_PKT_BUF_SIZE       1516   /**< Max Ethernet frame bytes (handles 1514) */
 
 /* ---------- Command codes (write to WIFI_REG_CMD) -------------------------- */

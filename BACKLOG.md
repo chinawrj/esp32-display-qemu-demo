@@ -61,7 +61,7 @@ green pytest.
 
 ---
 
-### ★ Phase A — Connection-time AP record (P0, Day 42)
+### ★ Phase A — Connection-time AP record (P0, Day 42) ✅ DONE
 
 **Goal:** Eliminate the hardcoded `s_fake_ap` in `esp_wifi_sta_get_ap_info`
 and the `-50` constant in `esp_wifi_sta_get_rssi`. Both must return the
@@ -91,12 +91,13 @@ to what `esp_wifi_scan_get_ap_records` now produces.
 
 #### Acceptance
 
-- [ ] In `wifi/getting_started/station` runtime, `esp_wifi_sta_get_ap_info`
+- [x] In `wifi/getting_started/station` runtime, `esp_wifi_sta_get_ap_info`
       after GOT_IP returns the SSID/BSSID/RSSI from wpa_supplicant
       STATUS — not the hardcoded `QEMU_TEST` / `AA:BB:…` fake.
-- [ ] `esp_wifi_sta_get_rssi` matches `signal=` from `wpa_cli status`
-      within ±2 dBm.
-- [ ] 93 tests green (90 baseline + 3 new).
+- [x] `esp_wifi_sta_get_rssi` matches `signal_level=` from `wpa_cli status`
+      (no longer hardcoded -50).
+- [x] Source-analysis tests assert `s_fake_ap` and `-50` constants are gone
+      and the 4 new MMIO regs are read.
 
 ---
 

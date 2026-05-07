@@ -258,9 +258,14 @@ class MockWpaSupplicant:
         if cmd == "STATUS":
             return (
                 f"bssid=aa:bb:cc:dd:ee:ff\n"
+                f"freq=2412\n"
                 f"ssid={self.ssid}\n"
                 f"id=0\n"
                 f"mode=station\n"
+                f"pairwise_cipher=CCMP\n"
+                f"group_cipher=CCMP\n"
+                f"key_mgmt=WPA2-PSK\n"
+                f"signal_level=-42\n"
                 f"ip_address={self.ip}\n"
                 f"address={self.mac}\n"
                 f"wpa_state=COMPLETED\n"

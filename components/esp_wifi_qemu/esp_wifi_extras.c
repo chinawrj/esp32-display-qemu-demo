@@ -18,9 +18,12 @@
 #if CONFIG_ESP_WIFI_QEMU
 
 #include <inttypes.h>
+#include <string.h>
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_wifi_qemu.h"
+#include "esp_wifi_private.h"
 #include "esp_wifi_types.h"
 
 static const char *TAG = "esp_wifi_qemu";
@@ -194,18 +197,53 @@ esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t *ap_info)
     if (!ap_info) {
         return ESP_ERR_INVALID_ARG;
     }
-    /* Return a minimal fake record for the QEMU virtual AP. */
-    static const wifi_ap_record_t s_fake_ap = {
-        .bssid       = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF},
-        .ssid        = "QEMU_TEST",
-        .primary     = 1,
-        .second      = WIFI_SECOND_CHAN_NONE,
-        .rssi        = -50,
-        .authmode    = WIFI_AUTH_WPA2_PSK,
-        .pairwise_cipher = WIFI_CIPHER_TYPE_CCMP,
-        .group_cipher    = WIFI_CIPHER_TYPE_CCMP,
-    };
-    *ap_info = s_fake_ap;
+
+    /* Day-42 Phase-A: read the connected-AP record from the QEMU device.
+     * The device populates these registers from the wpa_supplicant STATUS
+     * reply parsed in wpa_parse_status().  When no STATUS has been parsed
+     * yet (e.g. before connect, or after disconnect) all fields are zero. */
+    memset(ap_info, 0, sizeof(*ap_info));
+
+    /* BSSID from the two packed regs. */
+    uint32_t b0 = wifi_qemu_read(WIFI_REG_CONN_BSSID0);
+    uint32_t b1 = wifi_qemu_read(WIFI_REG_CONN_BSSID1);
+    memcpy(ap_info->bssid, &b0, 4);
+    ap_info->bssid[4] = (uint8_t)((b1 >> 24) & 0xff);
+    ap_info->bssid[5] = (uint8_t)((b1 >> 16) & 0xff);
+
+    /* freq / rssi / authmode packed in one reg. */
+    uint32_t fra = wifi_qemu_read(WIFI_REG_CONN_FREQ_RSSI_AUTH);
+    uint16_t freq    = (uint16_t)(fra & 0xffff);
+    int8_t   rssi    = (int8_t)((fra >> 16) & 0xff);
+    uint8_t  authmode = (uint8_t)((fra >> 24) & 0xff);
+    ap_info->rssi    = rssi;
+    ap_info->authmode = (wifi_auth_mode_t)authmode;
+
+    /* MHz -> channel (matches Day-41 scan path). */
+    uint8_t channel;
+    if (freq >= 2412 && freq <= 2472) {
+        channel = (uint8_t)((freq - 2407) / 5);
+    } else if (freq == 2484) {
+        channel = 14;
+    } else if (freq >= 5160 && freq <= 5885) {
+        channel = (uint8_t)((freq - 5000) / 5);
+    } else {
+        channel = 1;
+    }
+    ap_info->primary = channel;
+    ap_info->second  = WIFI_SECOND_CHAN_NONE;
+
+    /* pairwise / group cipher packed in one reg. */
+    uint32_t cph = wifi_qemu_read(WIFI_REG_CONN_CIPHERS);
+    ap_info->pairwise_cipher = (wifi_cipher_type_t)(cph & 0xff);
+    ap_info->group_cipher    = (wifi_cipher_type_t)((cph >> 8) & 0xff);
+
+    /* SSID is not transmitted via STATUS reliably; fall back to the
+     * config the firmware itself wrote via esp_wifi_set_config(). */
+    size_t slen = strnlen((char *)s_sta_cfg.sta.ssid, sizeof(ap_info->ssid) - 1);
+    memcpy(ap_info->ssid, s_sta_cfg.sta.ssid, slen);
+    ap_info->ssid[slen] = 0;
+
     return ESP_OK;
 }
 
@@ -218,7 +256,10 @@ esp_err_t esp_wifi_sta_get_rssi(int *rssi)
     if (!rssi) {
         return ESP_ERR_INVALID_ARG;
     }
-    *rssi = -50;  /* fixed fake RSSI for QEMU */
+    /* Day-42 Phase-A: derive from connected-AP record. */
+    uint32_t fra = wifi_qemu_read(WIFI_REG_CONN_FREQ_RSSI_AUTH);
+    int8_t v = (int8_t)((fra >> 16) & 0xff);
+    *rssi = (int)v;
     return ESP_OK;
 }
 

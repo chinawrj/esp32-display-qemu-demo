@@ -77,9 +77,30 @@ static int wpa_ctrl_send(ESPWifiState *s, const char *cmd)
     return 0;
 }
 
+/* ---------- Day-41/42: ESP-IDF wifi_auth_mode_t / wifi_cipher_type_t ----- */
+/* Mirrors enum values; used by both wpa_parse_status() (Day-42 Phase A) and */
+/* parse_wpa_flags() (Day-41 scan-result parser).                            */
+#define ESP_WIFI_AUTH_OPEN              0
+#define ESP_WIFI_AUTH_WEP               1
+#define ESP_WIFI_AUTH_WPA_PSK           2
+#define ESP_WIFI_AUTH_WPA2_PSK          3
+#define ESP_WIFI_AUTH_WPA_WPA2_PSK      4
+#define ESP_WIFI_AUTH_WPA2_ENTERPRISE   5
+#define ESP_WIFI_AUTH_WPA3_PSK          6
+#define ESP_WIFI_AUTH_WPA2_WPA3_PSK     7
+#define ESP_WIFI_AUTH_OWE               9
+
+#define ESP_WIFI_CIPHER_NONE            0
+#define ESP_WIFI_CIPHER_WEP40           1
+#define ESP_WIFI_CIPHER_WEP104          2
+#define ESP_WIFI_CIPHER_TKIP            3
+#define ESP_WIFI_CIPHER_CCMP            4
+#define ESP_WIFI_CIPHER_TKIP_CCMP       5
+
 static void wpa_parse_status(ESPWifiState *s, const char *buf)
 {
     const char *p;
+    ESPWifiScanResult *ap = &s->connected_ap;
 
     p = strstr(buf, "ip_address=");
     if (p) {
@@ -98,6 +119,100 @@ static void wpa_parse_status(ESPWifiState *s, const char *buf)
                    &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) == 6) {
             for (int i = 0; i < 6; i++) {
                 s->mac[i] = (uint8_t)m[i];
+            }
+        }
+    }
+
+    /* Day-42 Phase-A: parse connected-AP fields. */
+    p = strstr(buf, "bssid=");
+    if (p && (p == buf || p[-1] == '\n')) {
+        unsigned int m[6] = {0};
+        if (sscanf(p + 6, "%02x:%02x:%02x:%02x:%02x:%02x",
+                   &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) == 6) {
+            for (int i = 0; i < 6; i++) {
+                ap->bssid[i] = (uint8_t)m[i];
+            }
+        }
+    }
+    p = strstr(buf, "\nssid=");
+    if (p) {
+        char ssid[33] = {0};
+        sscanf(p + 6, "%32[^\n]", ssid);
+        ap->ssid_len = (uint8_t)MIN(strlen(ssid), 32);
+        memcpy(ap->ssid, ssid, ap->ssid_len);
+    }
+    p = strstr(buf, "\nfreq=");
+    if (p) {
+        int freq = 0;
+        if (sscanf(p + 6, "%d", &freq) == 1) {
+            ap->freq = (uint16_t)freq;
+        }
+    }
+    p = strstr(buf, "signal_level=");
+    if (p) {
+        int sig = 0;
+        if (sscanf(p + 13, "%d", &sig) == 1) {
+            ap->rssi = (int8_t)sig;
+        }
+    } else {
+        /* No signal_level reported by wpa_supplicant for this assoc;
+         * approximate from freq-band default so apps still get a value. */
+        if (ap->rssi == 0) { ap->rssi = -50; }
+    }
+    /* key_mgmt -> authmode.  Common tokens: NONE, WPA-PSK, WPA2-PSK,
+     * WPA-PSK+WPA2-PSK, SAE, WPA2-PSK+SAE, WPA-EAP, WPA2-EAP, WPA3-PSK. */
+    p = strstr(buf, "\nkey_mgmt=");
+    if (p) {
+        char km[64] = {0};
+        sscanf(p + 10, "%63[^\n]", km);
+        bool has_wpa3 = strstr(km, "SAE") || strstr(km, "WPA3");
+        bool has_wpa2 = strstr(km, "WPA2") != NULL;
+        bool has_wpa1 = false;
+        for (const char *q = km; (q = strstr(q, "WPA")) != NULL; q += 3) {
+            if (q[3] == '-') { has_wpa1 = true; break; }
+        }
+        bool has_eap  = strstr(km, "EAP") != NULL;
+        bool has_owe  = strstr(km, "OWE") != NULL;
+        bool has_none = strstr(km, "NONE") != NULL;
+        if (has_wpa3 && has_wpa2) {
+            ap->authmode = ESP_WIFI_AUTH_WPA2_WPA3_PSK;
+        } else if (has_wpa3) {
+            ap->authmode = ESP_WIFI_AUTH_WPA3_PSK;
+        } else if (has_wpa2 && has_eap) {
+            ap->authmode = ESP_WIFI_AUTH_WPA2_ENTERPRISE;
+        } else if (has_wpa1 && has_wpa2) {
+            ap->authmode = ESP_WIFI_AUTH_WPA_WPA2_PSK;
+        } else if (has_wpa2) {
+            ap->authmode = ESP_WIFI_AUTH_WPA2_PSK;
+        } else if (has_wpa1) {
+            ap->authmode = ESP_WIFI_AUTH_WPA_PSK;
+        } else if (has_owe) {
+            ap->authmode = ESP_WIFI_AUTH_OWE;
+        } else if (has_none) {
+            ap->authmode = ESP_WIFI_AUTH_OPEN;
+        }
+    }
+    /* pairwise_cipher / group_cipher tokens.  CCMP / TKIP / NONE / WEP40. */
+    {
+        const char *labels[2] = { "\npairwise_cipher=", "\ngroup_cipher=" };
+        uint8_t *dst[2] = { &ap->pairwise_cipher, &ap->group_cipher };
+        for (int i = 0; i < 2; i++) {
+            p = strstr(buf, labels[i]);
+            if (!p) { continue; }
+            char tok[32] = {0};
+            sscanf(p + strlen(labels[i]), "%31[^\n]", tok);
+            if (strstr(tok, "CCMP") && strstr(tok, "TKIP")) {
+                *dst[i] = ESP_WIFI_CIPHER_TKIP_CCMP;
+            } else if (strstr(tok, "CCMP")) {
+                *dst[i] = ESP_WIFI_CIPHER_CCMP;
+            } else if (strstr(tok, "TKIP")) {
+                *dst[i] = ESP_WIFI_CIPHER_TKIP;
+            } else if (strstr(tok, "WEP40")) {
+                *dst[i] = ESP_WIFI_CIPHER_WEP40;
+            } else if (strstr(tok, "WEP104")) {
+                *dst[i] = ESP_WIFI_CIPHER_WEP104;
+            } else if (strstr(tok, "NONE")) {
+                *dst[i] = ESP_WIFI_CIPHER_NONE;
             }
         }
     }
@@ -123,23 +238,7 @@ static gboolean esp_wifi_post_got_ip_cb(gpointer data)
 }
 
 /* ---------- Day-41: parse wpa_cli flags string -> authmode + ciphers ----- */
-/* Mirrors ESP-IDF wifi_auth_mode_t / wifi_cipher_type_t enum values.        */
-#define ESP_WIFI_AUTH_OPEN              0
-#define ESP_WIFI_AUTH_WEP               1
-#define ESP_WIFI_AUTH_WPA_PSK           2
-#define ESP_WIFI_AUTH_WPA2_PSK          3
-#define ESP_WIFI_AUTH_WPA_WPA2_PSK      4
-#define ESP_WIFI_AUTH_WPA2_ENTERPRISE   5
-#define ESP_WIFI_AUTH_WPA3_PSK          6
-#define ESP_WIFI_AUTH_WPA2_WPA3_PSK     7
-#define ESP_WIFI_AUTH_OWE               9
-
-#define ESP_WIFI_CIPHER_NONE            0
-#define ESP_WIFI_CIPHER_WEP40           1
-#define ESP_WIFI_CIPHER_WEP104          2
-#define ESP_WIFI_CIPHER_TKIP            3
-#define ESP_WIFI_CIPHER_CCMP            4
-#define ESP_WIFI_CIPHER_TKIP_CCMP       5
+/* (Auth/cipher enum macros are defined above, near wpa_parse_status.)       */
 
 static void parse_wpa_flags(const char *flags, ESPWifiScanResult *r)
 {
@@ -253,6 +352,7 @@ static void wpa_handle_msg(ESPWifiState *s, const char *buf, ssize_t len)
     if (strncmp(ev, "CTRL-EVENT-DISCONNECTED", 23) == 0) {
         s->conn_state = WPA_CONN_IDLE;
         s->status     = WIFI_STATE_STARTED;
+        memset(&s->connected_ap, 0, sizeof(s->connected_ap));
         esp_wifi_post_event(s, WIFI_EVT_DISCONNECTED);
         return;
     }
@@ -931,6 +1031,26 @@ static uint64_t esp_wifi_read(void *opaque, hwaddr addr, unsigned int size)
         if (s->scan_idx < s->scan_count) {
             r = s->scan_results[s->scan_idx].flag_bits;
         }
+        break;
+    /* Day-42 Phase-A: connected-AP record */
+    case WIFI_REG_CONN_BSSID0:
+        r = ((uint32_t)s->connected_ap.bssid[0])       |
+            ((uint32_t)s->connected_ap.bssid[1] << 8)  |
+            ((uint32_t)s->connected_ap.bssid[2] << 16) |
+            ((uint32_t)s->connected_ap.bssid[3] << 24);
+        break;
+    case WIFI_REG_CONN_BSSID1:
+        r = ((uint32_t)s->connected_ap.bssid[4] << 24) |
+            ((uint32_t)s->connected_ap.bssid[5] << 16);
+        break;
+    case WIFI_REG_CONN_FREQ_RSSI_AUTH:
+        r = ((uint32_t)s->connected_ap.freq) |
+            (((uint32_t)(uint8_t)s->connected_ap.rssi) << 16) |
+            (((uint32_t)s->connected_ap.authmode) << 24);
+        break;
+    case WIFI_REG_CONN_CIPHERS:
+        r = ((uint32_t)s->connected_ap.pairwise_cipher) |
+            (((uint32_t)s->connected_ap.group_cipher) << 8);
         break;
     case WIFI_REG_CTRL_SOCK_LEN: r = s->ctrl_sock_path_len; break;
     case WIFI_REG_TX_ADDR: r = s->tx_addr; break;

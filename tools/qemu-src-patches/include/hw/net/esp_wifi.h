@@ -27,7 +27,7 @@
 /* ---------- MMIO size ----------------------------------------------------- */
 /* 0x134 bytes: covers all control regs + 4 DMA pointer regs + 4 scan-detail */
 /* regs (Day-41).  MUST stay < 0x144 to avoid the RNG device at WDEV+0x144.  */
-#define ESP_WIFI_IO_SIZE        0x134
+#define ESP_WIFI_IO_SIZE        0x144
 
 /* ---------- Packet buffer size (DMA transfer, no MMIO buffer needed) ------- */
 #define WIFI_PKT_BUF_SIZE       1516    /* handles Ethernet max 1514 bytes   */
@@ -71,7 +71,12 @@
 #define WIFI_REG_SCAN_PAIRWISE_CIPHER 0x128  /* u8 wifi_cipher_type_t */
 #define WIFI_REG_SCAN_GROUP_CIPHER    0x12c  /* u8 wifi_cipher_type_t */
 #define WIFI_REG_SCAN_FLAG_BITS       0x130  /* bit0 = WPS supported */
-/* Range 0x000–0x133 ✓  RNG lives at +0x144, safely out of our MMIO region */
+/* Day-42 Phase-A: connection-time AP record (parsed from wpa_cli STATUS) */
+#define WIFI_REG_CONN_BSSID0          0x134  /* u32: bytes 0..3 of BSSID */
+#define WIFI_REG_CONN_BSSID1          0x138  /* u32: bytes 4..5 in [31:16] */
+#define WIFI_REG_CONN_FREQ_RSSI_AUTH  0x13c  /* freq[15:0]|rssi[23:16]|auth[31:24] */
+#define WIFI_REG_CONN_CIPHERS         0x140  /* pairwise[7:0]|group[15:8] */
+/* Range 0x000–0x143 ✓  RNG lives at +0x144, safely out of our MMIO region */
 
 /* ---------- Command codes (write to WIFI_REG_CMD) ------------------------- */
 #define WIFI_CMD_INIT           0x01
@@ -148,6 +153,9 @@ typedef struct ESPWifiState {
     uint32_t            scan_idx;
     ESPWifiScanResult   scan_results[ESP_WIFI_MAX_SCAN_RESULTS];
     bool                scan_only;  /**< true when started by WIFI_CMD_SCAN (not CONNECT) */
+
+    /* --- Day-42 Phase-A: connected AP record (filled from wpa_cli STATUS) - */
+    ESPWifiScanResult   connected_ap;
 
     /* --- wpa_supplicant async I/O --- */
     int         ctrl_fd;            /**< Unix DGRAM ctrl socket, -1 = closed */
