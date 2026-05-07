@@ -355,6 +355,33 @@ class TestSourceFiles:
             "Forward declaration of wpa_ctrl_close must appear before wpa_ctrl_open."
         )
 
+    def test_esp_wifi_start_issues_startup_scan(self):
+        """esp_wifi_start() must write WIFI_CMD_SCAN after posting STA_START.
+
+        During startup the shim issues an async scan so the AP list is already
+        populated when the application's WIFI_EVENT_STA_START handler runs or
+        before the first esp_wifi_connect() call.
+        """
+        shim_c = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_shim.c"
+        src = shim_c.read_text()
+
+        # Locate the esp_wifi_start function body
+        start_idx = src.find("esp_err_t esp_wifi_start(void)")
+        assert start_idx >= 0, "esp_wifi_start not found in esp_wifi_shim.c"
+        # The scan write must come after the STA_START post
+        sta_start_post = src.find("WIFI_EVENT_STA_START", start_idx)
+        scan_write = src.find("WIFI_CMD_SCAN", start_idx)
+        assert sta_start_post >= 0, (
+            "esp_wifi_start must post WIFI_EVENT_STA_START"
+        )
+        assert scan_write >= 0, (
+            "esp_wifi_start must write WIFI_CMD_SCAN (startup scan)"
+        )
+        assert scan_write > sta_start_post, (
+            "WIFI_CMD_SCAN write in esp_wifi_start must appear after "
+            "WIFI_EVENT_STA_START post, not before"
+        )
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

@@ -294,6 +294,14 @@ esp_err_t esp_wifi_start(void)
                             tskIDLE_PRIORITY + 2, &s_evt_task);
             }
             esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START, NULL, 0, portMAX_DELAY);
+            /* Issue a background scan right at startup so AP list is already
+             * populated when the app's WIFI_EVENT_STA_START handler fires
+             * or when esp_wifi_connect() is called.  The event task picks up
+             * WIFI_EVT_SCAN_DONE and posts WIFI_EVENT_SCAN_DONE with the
+             * result count.  A subsequent esp_wifi_scan_start() call works
+             * normally and overwrites these results. */
+            wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_SCAN);
+            ESP_LOGI(TAG, "startup scan initiated");
         } else {
             ESP_LOGW(TAG, "esp_wifi_start STA: %s (0x%x) — continuing in QEMU",
                      esp_err_to_name(ret), ret);
