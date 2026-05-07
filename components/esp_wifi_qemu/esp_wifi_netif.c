@@ -76,12 +76,26 @@ static void qemu_wifi_free_rx_buf(void *h, void *buffer)
 }
 
 /* ---------------------------------------------------------------------------
+ * TX wrap callback — called by low_level_output (wlanif) for all frames.
+ * esp_netif_transmit_wrap() calls driver_transmit_wrap unconditionally,
+ * so this must NOT be NULL.  pbuf is the lwIP buffer reference (ignored here
+ * since we copy the data into our static DMA TX buffer).
+ * -------------------------------------------------------------------------*/
+static esp_err_t qemu_wifi_transmit_wrap(void *h, void *buffer, size_t len,
+                                         void *pbuf)
+{
+    (void)h;
+    (void)pbuf;
+    return qemu_wifi_transmit(h, buffer, len);
+}
+
+/* ---------------------------------------------------------------------------
  * Driver config (static, no heap allocation needed)
  * -------------------------------------------------------------------------*/
 static esp_netif_driver_ifconfig_t s_driver_cfg = {
     .handle              = (void *)0xdeadbeef, /* non-NULL sentinel */
     .transmit            = qemu_wifi_transmit,
-    .transmit_wrap       = NULL,
+    .transmit_wrap       = qemu_wifi_transmit_wrap,
     .driver_free_rx_buffer = qemu_wifi_free_rx_buf,
 };
 

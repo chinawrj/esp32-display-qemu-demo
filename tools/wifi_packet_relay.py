@@ -466,18 +466,19 @@ async def process_frame(frame: bytes, state: RelayState, send_fn):
 
 
 async def handle_arp(payload: bytes, src_mac: bytes, send_fn):
-    """Handle ARP Who-Has — reply for gateway IP."""
+    """Handle ARP Who-Has — reply for gateway IP and any locally-mapped IP."""
     arp = parse_arp(payload)
     if arp is None:
         return
     log.debug(f"ARP op={arp['op']} who-has {arp['target_ip']} tell {arp['sender_ip']}")
 
     if arp["op"] == 1:  # ARP request
-        if arp["target_ip"] == GATEWAY_IP:
-            reply = build_arp_reply(GATEWAY_MAC, GATEWAY_IP,
+        target = arp["target_ip"]
+        if target == GATEWAY_IP or target in LOCAL_HOST_MAP:
+            reply = build_arp_reply(GATEWAY_MAC, target,
                                     arp["sender_mac"], arp["sender_ip"])
             await send_fn(reply)
-            log.debug(f"ARP reply: {GATEWAY_IP} is at {GATEWAY_MAC.hex(':')}")
+            log.debug(f"ARP reply: {target} is at {GATEWAY_MAC.hex(':')}")
 
 
 async def handle_ipv4(ip: dict, src_mac: bytes, state: RelayState, send_fn):

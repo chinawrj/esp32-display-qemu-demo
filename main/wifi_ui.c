@@ -18,6 +18,7 @@ void wifi_ui_init(void)
     lv_obj_set_style_bg_opa(s_label, LV_OPA_50, 0);
     lv_obj_align(s_label, LV_ALIGN_TOP_MID, 0, 2);
     lv_label_set_text(s_label, s_buf);
+    lv_obj_null_on_delete(&s_label);
     ESP_LOGI(TAG, "wifi_ui: label created");
 }
 

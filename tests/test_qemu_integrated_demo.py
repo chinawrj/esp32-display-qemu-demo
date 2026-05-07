@@ -187,6 +187,9 @@ class TestIntegratedDemo:
         qemu_env = os.environ.copy()
         qemu_env["ESP_WIFI_CTRL_SOCKET"] = _MOCK_SOCKET
 
+        # Day-34: -serial stdio with stdin=DEVNULL causes QEMU to get EOF on
+        # stdin and stop producing serial output entirely.  Use -nographic
+        # which routes guest serial to stdout regardless of stdin state.
         qemu_cmd = [
             str(QEMU_BIN),
             "-M", "esp32",
@@ -198,25 +201,41 @@ class TestIntegratedDemo:
             "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
         ]
 
+        # Day-34: subprocess.run(capture_output=True) fills the OS pipe buffer
+        # (~64 KB) before QEMU reaches "got ip:" — QEMU then blocks writing and
+        # firmware makes no progress.  Use Popen + line-by-line reading instead.
+        serial_lines: list[str] = []
+        got_ip = False
+        qemu_proc: subprocess.Popen | None = None
         try:
-            result = subprocess.run(
+            qemu_proc = subprocess.Popen(
                 qemu_cmd,
                 env=qemu_env,
-                capture_output=True,
-                text=True,
-                timeout=_BOOT_TIMEOUT_S,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
             )
-            serial_out = result.stdout + result.stderr
-        except subprocess.TimeoutExpired as exc:
-            # Timeout means QEMU ran for full duration — extract available output
-            raw_out = (exc.stdout or b"") + (exc.stderr or b"")
-            if isinstance(raw_out, bytes):
-                serial_out = raw_out.decode("utf-8", errors="replace")
-            else:
-                serial_out = str(raw_out)
+            assert qemu_proc.stdout is not None
+            deadline = time.monotonic() + _BOOT_TIMEOUT_S
+            while time.monotonic() < deadline:
+                line = qemu_proc.stdout.readline()
+                if not line:
+                    if qemu_proc.poll() is not None:
+                        break
+                    continue
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                serial_lines.append(decoded)
+                if "got ip:" in decoded:
+                    got_ip = True
+                    break
         finally:
             daemon.stop()
-            # Kill any residual QEMU process
+            if qemu_proc is not None:
+                try:
+                    qemu_proc.terminate()
+                    qemu_proc.wait(timeout=5)
+                except Exception:
+                    pass
             subprocess.run(
                 ["pkill", "-f", "qemu-system-xtensa"],
                 capture_output=True,
@@ -226,10 +245,10 @@ class TestIntegratedDemo:
             except OSError:
                 pass
 
-        assert "got ip:" in serial_out, (
+        assert got_ip, (
             f"'got ip:' not found in QEMU serial output after {_BOOT_TIMEOUT_S}s.\n"
             f"Last 80 lines:\n"
-            + "\n".join(serial_out.splitlines()[-80:])
+            + "\n".join(serial_lines[-80:])
         )
 
     def test_lvgl_banner_in_serial(self):

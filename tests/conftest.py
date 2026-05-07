@@ -62,14 +62,15 @@ def qemu_log() -> Path:
     script = PROJECT_ROOT / "tools" / "run-qemu.sh"
     # 'verify' mode exits non-zero on failure; we still want the log either
     # way so individual tests can produce per-check failures.
-    # Day-33: QEMU ESP32 emulation runs ~18x slower than real-time; the full
-    # LVGL demo benchmark + WiFi init + probe need ~200 wall seconds.
-    # Use 250 s to give a comfortable margin over the ~200 s minimum.
+    # Day-34: The LVGL benchmark markers appear at firmware t≈11000ms.  At
+    # nominal 18x slowdown that needs ~198 wall seconds.  Add a 56% margin
+    # (300 s → 16 667 ms firmware) so variance in QEMU emulation speed does
+    # not produce an incomplete log that conftest then caches as "fresh".
     subprocess.run(
-        ["bash", str(script), "250", "verify"],
+        ["bash", str(script), "300", "verify"],
         cwd=PROJECT_ROOT,
         check=False,
-        timeout=330,
+        timeout=390,
     )
 
     if not DEFAULT_LOG.is_file() or DEFAULT_LOG.stat().st_size == 0:
