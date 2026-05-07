@@ -422,7 +422,7 @@ def test_run_real_wifi_supports_sudo_mode():
 
 
 # ---------------------------------------------------------------------------
-# Real-scan (Day 39): mock_wpa_supplicant --real-scan uses nmcli
+# Real-scan (Day 40): mock_wpa_supplicant --real-scan uses wpa_cli (real Wi-Fi card)
 # ---------------------------------------------------------------------------
 
 def test_mock_has_real_scan_flag():
@@ -437,29 +437,44 @@ def test_mock_has_real_scan_flag():
     )
 
 
-def test_mock_real_scan_calls_nmcli():
-    """_nmcli_to_wpa_scan_results() must invoke nmcli for real AP list."""
+def test_mock_real_scan_calls_wpa_cli():
+    """_wpa_cli_scan_results() must invoke wpa_cli to read from the real Wi-Fi card."""
     mock = TOOLS_DIR / "mock_wpa_supplicant.py"
     src = mock.read_text()
-    assert "_nmcli_to_wpa_scan_results" in src, (
-        "mock must define _nmcli_to_wpa_scan_results() helper"
+    assert "_wpa_cli_scan_results" in src, (
+        "mock must define _wpa_cli_scan_results() helper"
     )
-    assert "nmcli" in src, (
-        "_nmcli_to_wpa_scan_results must call nmcli"
+    assert "wpa_cli" in src, (
+        "_wpa_cli_scan_results must call wpa_cli"
     )
-    assert "SSID,BSSID,FREQ,SIGNAL,SECURITY" in src, (
-        "nmcli call must request SSID, BSSID, FREQ, SIGNAL, SECURITY fields"
+    assert "scan_results" in src, (
+        "wpa_cli call must request scan_results"
     )
 
 
-def test_mock_real_scan_converts_signal_to_dbm():
-    """mock must convert nmcli quality (0-100) to dBm."""
+def test_mock_real_scan_proxies_wpa_cli_output():
+    """mock must proxy wpa_cli output directly — no quality-to-dBm conversion
+    needed because wpa_supplicant already reports signal in dBm."""
     mock = TOOLS_DIR / "mock_wpa_supplicant.py"
     src = mock.read_text()
-    # The conversion formula: dBm = (quality // 2) - 100
-    assert "// 2) - 100" in src or "/ 2) - 100" in src, (
-        "mock must convert nmcli signal quality to dBm with (quality/2)-100"
+    assert "_wpa_cli_scan_results" in src, (
+        "mock must use wpa_cli backend for pre-formatted scan results"
     )
+    # wpa_cli already returns dBm — nmcli quality conversion must not be present
+    assert "// 2) - 100" not in src and "/ 2) - 100" not in src, (
+        "wpa_cli backend must not apply nmcli quality-to-dBm conversion"
+    )
+
+
+def test_mock_real_scan_has_wpa_iface_option():
+    """mock must expose --wpa-iface, --wpa-ctrl-dir, auto-detect iface, and group check."""
+    mock = TOOLS_DIR / "mock_wpa_supplicant.py"
+    src = mock.read_text()
+    assert "--wpa-iface" in src, "mock must expose --wpa-iface arg"
+    assert "--wpa-ctrl-dir" in src, "mock must expose --wpa-ctrl-dir arg"
+    assert "_auto_detect_iface" in src, "mock must auto-detect wireless interface"
+    assert "/var/run/wpa_supplicant" in src, "default ctrl dir must be /var/run/wpa_supplicant"
+    assert "_need_sg_netdev" in src, "mock must detect if sg netdev workaround is needed"
 
 
 def test_mock_real_scan_deduplicates_bssids():
