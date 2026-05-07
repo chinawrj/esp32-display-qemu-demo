@@ -174,6 +174,13 @@ the mode. Real PS semantics in QEMU are meaningless (no radio), but
 - [x] No regressions on existing samples (stock scan + station rebuild
       cleanly).
 
+#### Day-45 follow-up (committed separately)
+
+- Round-trip storage added for `esp_wifi_set/get_promiscuous`,
+  `set/get_promiscuous_filter`, `set/get_promiscuous_ctrl_filter` in
+  `esp_wifi_promisc.c`. `set_promiscuous(true)` no longer returns
+  `ESP_ERR_NOT_SUPPORTED` (state stored; raw RX delivery still Phase E).
+
 ---
 
 ### Phase D — SoftAP station list & DHCP (P1, Day 45–46)

@@ -666,6 +666,41 @@ class TestSourceFiles:
         )
         assert "*sec = s_inactive_time[ifx]" in get_body
 
+    def test_phase_c_promisc_state_round_trip(self):
+        """Phase-C: promiscuous enable/filter state round-trips through storage."""
+        promisc = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_promisc.c"
+        src = promisc.read_text()
+        assert "s_promisc_enabled" in src, (
+            "promisc enable storage missing"
+        )
+        assert "s_promisc_filter" in src, (
+            "promisc filter storage missing"
+        )
+        assert "s_promisc_ctrl_filter" in src, (
+            "promisc ctrl filter storage missing"
+        )
+        # set_promiscuous must no longer return ESP_ERR_NOT_SUPPORTED.
+        sp_idx = src.find("esp_wifi_set_promiscuous(bool en)")
+        assert sp_idx != -1
+        body = src[sp_idx:sp_idx + 400]
+        assert "ESP_ERR_NOT_SUPPORTED" not in body, (
+            "set_promiscuous must accept the call (state stored)"
+        )
+        assert "s_promisc_enabled = en" in body
+        # get_promiscuous must read back stored state, not hardcode false.
+        gp_idx = src.find("esp_wifi_get_promiscuous(bool *en)")
+        assert gp_idx != -1
+        get_body = src[gp_idx:gp_idx + 300]
+        assert "*en = false;" not in get_body, (
+            "get_promiscuous must not hardcode false"
+        )
+        assert "*en = s_promisc_enabled" in get_body
+        # set_promiscuous_filter must validate non-NULL and store.
+        sf_idx = src.find("esp_wifi_set_promiscuous_filter")
+        assert sf_idx != -1
+        sf_body = src[sf_idx:sf_idx + 400]
+        assert "s_promisc_filter = *filter" in sf_body
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)
