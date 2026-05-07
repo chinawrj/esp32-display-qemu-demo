@@ -499,6 +499,107 @@ class TestSourceFiles:
             "Disconnect handler must zero s->connected_ap"
         )
 
+    # ----- Day-43 Phase-B: round-trip storage ---------------------------------
+
+    def test_phase_b_channel_round_trip_storage(self):
+        """Phase-B: channel setter must store, getter must return stored value."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_channel_primary" in src, "channel storage missing"
+        assert "s_channel_second" in src, "second-channel storage missing"
+        # set_channel must validate input range.
+        set_idx = src.find("esp_wifi_set_channel(uint8_t primary")
+        assert set_idx != -1
+        set_body = src[set_idx:set_idx + 600]
+        assert "primary < 1" in set_body and "primary > 14" in set_body, (
+            "set_channel must validate 1..14"
+        )
+        assert "s_channel_primary = primary" in set_body, (
+            "set_channel must store the primary channel"
+        )
+        # get_channel must NOT return a hardcoded *primary = 1.
+        get_idx = src.find("esp_wifi_get_channel(uint8_t *primary")
+        assert get_idx != -1
+        get_body = src[get_idx:get_idx + 800]
+        assert "*primary = 1;" not in get_body, (
+            "get_channel must not hardcode *primary = 1"
+        )
+        # When connected, get_channel must derive from the AP's freq reg.
+        assert "WIFI_REG_CONN_FREQ_RSSI_AUTH" in get_body, (
+            "get_channel must consult the connected-AP freq register"
+        )
+
+    def test_phase_b_country_round_trip_storage(self):
+        """Phase-B: country setter must store the struct verbatim."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_country" in src, "country storage missing"
+        set_idx = src.find("esp_wifi_set_country(const wifi_country_t")
+        assert set_idx != -1
+        body = src[set_idx:set_idx + 600]
+        assert "s_country = *country" in body, (
+            "set_country must copy the caller-supplied struct"
+        )
+        # get_country_code must read s_country.cc (no hardcoded 'C','N').
+        gcc_idx = src.find("esp_wifi_get_country_code(char *country)")
+        assert gcc_idx != -1
+        gcc_body = src[gcc_idx:gcc_idx + 400]
+        assert "s_country.cc" in gcc_body, (
+            "get_country_code must read from s_country.cc"
+        )
+
+    def test_phase_b_protocol_per_interface_storage(self):
+        """Phase-B: protocol bitmap is stored per interface (STA / AP)."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_protocol[" in src, "per-interface protocol storage missing"
+        set_idx = src.find("esp_wifi_set_protocol(wifi_interface_t ifx")
+        assert set_idx != -1
+        body = src[set_idx:set_idx + 400]
+        assert "s_protocol[ifx] = protocol_bitmap" in body, (
+            "set_protocol must store per-interface"
+        )
+
+    def test_phase_b_max_tx_power_round_trip(self):
+        """Phase-B: max_tx_power setter must store and validate range 8..84."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        set_idx = src.find("esp_wifi_set_max_tx_power(int8_t power)")
+        assert set_idx != -1
+        body = src[set_idx:set_idx + 400]
+        assert "power < 8" in body and "power > 84" in body, (
+            "set_max_tx_power must validate IDF range 8..84"
+        )
+        assert "s_max_tx_power_qdbm = power" in body, (
+            "set_max_tx_power must store the value"
+        )
+        # get_max_tx_power must not return a hardcoded 20.
+        get_idx = src.find("esp_wifi_get_max_tx_power(int8_t *power)")
+        assert get_idx != -1
+        get_body = src[get_idx:get_idx + 300]
+        assert "*power = 20;" not in get_body, (
+            "get_max_tx_power must not hardcode *power = 20"
+        )
+        assert "*power = s_max_tx_power_qdbm" in get_body
+
+    def test_phase_b_bandwidth_per_interface_storage(self):
+        """Phase-B: bandwidth is stored per interface."""
+        extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
+        src = extras.read_text()
+        assert "s_bandwidth[" in src, "per-interface bandwidth storage missing"
+        set_idx = src.find("esp_wifi_set_bandwidth(wifi_interface_t ifx")
+        assert set_idx != -1
+        body = src[set_idx:set_idx + 400]
+        assert "s_bandwidth[ifx] = bw" in body, (
+            "set_bandwidth must store per-interface"
+        )
+        get_idx = src.find("esp_wifi_get_bandwidth(wifi_interface_t ifx")
+        assert get_idx != -1
+        get_body = src[get_idx:get_idx + 400]
+        assert "*bw = WIFI_BW_HT20;" not in get_body, (
+            "get_bandwidth must not hardcode HT20"
+        )
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

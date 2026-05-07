@@ -29,6 +29,57 @@
 static const char *TAG = "esp_wifi_qemu";
 
 /* ---------------------------------------------------------------------------
+ * Day-43 Phase-B: round-trip storage for runtime configuration
+ *
+ * Stock ESP-IDF samples (fast_scan, iperf, wifi_country, power_save) call
+ * pairs of esp_wifi_set_X / esp_wifi_get_X and assume the getter returns
+ * the value the setter just wrote.  These were previously no-ops returning
+ * fixed defaults; now they round-trip through static state.  Real radio
+ * effects (channel switching, regulatory limits, …) are out of scope —
+ * QEMU has no PHY.
+ * -------------------------------------------------------------------------*/
+
+static uint8_t            s_channel_primary  = 1;
+static wifi_second_chan_t s_channel_second   = WIFI_SECOND_CHAN_NONE;
+static wifi_country_t     s_country = {
+    .cc           = "CN",
+    .schan        = 1,
+    .nchan        = 13,
+    .max_tx_power = 20,
+    .policy       = WIFI_COUNTRY_POLICY_AUTO,
+};
+/* max_tx_power is stored in IDF's 0.25 dBm units (range 8..84 = 2..21 dBm). */
+static int8_t             s_max_tx_power_qdbm = 80;  /* 20 dBm */
+/* Per-interface state (indexed by wifi_interface_t: 0=STA, 1=AP). */
+#define QEMU_WIFI_IF_COUNT 2
+static uint8_t            s_protocol[QEMU_WIFI_IF_COUNT] = {
+    WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N,
+    WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N,
+};
+static wifi_bandwidth_t   s_bandwidth[QEMU_WIFI_IF_COUNT] = {
+    WIFI_BW_HT20, WIFI_BW_HT20,
+};
+
+/* Convert an 802.11 channel-centre frequency in MHz to a primary channel
+ * number.  Returns 0 if the frequency is not in a recognised band. */
+static uint8_t qemu_freq_to_channel(uint16_t freq_mhz)
+{
+    if (freq_mhz == 0) {
+        return 0;
+    }
+    if (freq_mhz == 2484) {
+        return 14;
+    }
+    if (freq_mhz >= 2412 && freq_mhz <= 2472) {
+        return (uint8_t)((freq_mhz - 2407) / 5);
+    }
+    if (freq_mhz >= 5180 && freq_mhz <= 5885) {
+        return (uint8_t)((freq_mhz - 5000) / 5);
+    }
+    return 0;
+}
+
+/* ---------------------------------------------------------------------------
  * Storage / NVS
  * -------------------------------------------------------------------------*/
 
@@ -75,17 +126,24 @@ esp_err_t esp_wifi_get_ps(wifi_ps_type_t *type)
 
 esp_err_t esp_wifi_set_bandwidth(wifi_interface_t ifx, wifi_bandwidth_t bw)
 {
-    ESP_LOGD(TAG, "set_bandwidth(ifx=%d, bw=%d) — no-op in QEMU", ifx, bw);
+    if ((unsigned)ifx >= QEMU_WIFI_IF_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (bw != WIFI_BW_HT20 && bw != WIFI_BW_HT40) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_bandwidth[ifx] = bw;
+    ESP_LOGD(TAG, "set_bandwidth(ifx=%d, bw=%d)", ifx, bw);
     return ESP_OK;
 }
 
 esp_err_t esp_wifi_get_bandwidth(wifi_interface_t ifx, wifi_bandwidth_t *bw)
 {
-    if (!bw) {
+    if (!bw || (unsigned)ifx >= QEMU_WIFI_IF_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
-    *bw = WIFI_BW_HT20;
-    ESP_LOGD(TAG, "get_bandwidth(ifx=%d) → WIFI_BW_HT20 (QEMU)", ifx);
+    *bw = s_bandwidth[ifx];
+    ESP_LOGD(TAG, "get_bandwidth(ifx=%d) → %d", ifx, *bw);
     return ESP_OK;
 }
 
@@ -95,8 +153,17 @@ esp_err_t esp_wifi_get_bandwidth(wifi_interface_t ifx, wifi_bandwidth_t *bw)
 
 esp_err_t esp_wifi_set_channel(uint8_t primary, wifi_second_chan_t second)
 {
-    ESP_LOGD(TAG, "set_channel(primary=%u, second=%d) — no-op in QEMU",
-             primary, second);
+    if (primary < 1 || primary > 14) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (second != WIFI_SECOND_CHAN_NONE  &&
+        second != WIFI_SECOND_CHAN_ABOVE &&
+        second != WIFI_SECOND_CHAN_BELOW) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_channel_primary = primary;
+    s_channel_second  = second;
+    ESP_LOGD(TAG, "set_channel(primary=%u, second=%d)", primary, second);
     return ESP_OK;
 }
 
@@ -105,9 +172,18 @@ esp_err_t esp_wifi_get_channel(uint8_t *primary, wifi_second_chan_t *second)
     if (!primary || !second) {
         return ESP_ERR_INVALID_ARG;
     }
-    *primary = 1;
-    *second  = WIFI_SECOND_CHAN_NONE;
-    ESP_LOGD(TAG, "get_channel() → ch1 (QEMU)");
+    /* If the firmware is connected to an AP, return the AP's channel
+     * (Phase-A reuse): the QEMU device exposes the connected AP's freq
+     * via WIFI_REG_CONN_FREQ_RSSI_AUTH and freq==0 means "not connected". */
+    uint16_t freq = (uint16_t)(wifi_qemu_read(WIFI_REG_CONN_FREQ_RSSI_AUTH) & 0xffff);
+    uint8_t  ch   = qemu_freq_to_channel(freq);
+    if (ch != 0) {
+        *primary = ch;
+    } else {
+        *primary = s_channel_primary;
+    }
+    *second = s_channel_second;
+    ESP_LOGD(TAG, "get_channel() → ch=%u sec=%d", *primary, *second);
     return ESP_OK;
 }
 
@@ -117,7 +193,19 @@ esp_err_t esp_wifi_get_channel(uint8_t *primary, wifi_second_chan_t *second)
 
 esp_err_t esp_wifi_set_country(const wifi_country_t *country)
 {
-    ESP_LOGD(TAG, "set_country() — no-op in QEMU");
+    if (!country) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (country->schan < 1 || country->schan > 14 ||
+        country->nchan < 1 || country->nchan > 14 ||
+        (uint16_t)(country->schan + country->nchan - 1) > 14) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_country = *country;
+    ESP_LOGD(TAG, "set_country(cc=%c%c schan=%u nchan=%u)",
+             country->cc[0] ? country->cc[0] : '?',
+             country->cc[1] ? country->cc[1] : '?',
+             country->schan, country->nchan);
     return ESP_OK;
 }
 
@@ -126,15 +214,7 @@ esp_err_t esp_wifi_get_country(wifi_country_t *country)
     if (!country) {
         return ESP_ERR_INVALID_ARG;
     }
-    /* Return a safe default: CN, channels 1-13. */
-    static const wifi_country_t s_default_country = {
-        .cc      = "CN",
-        .schan   = 1,
-        .nchan   = 13,
-        .max_tx_power = 20,
-        .policy  = WIFI_COUNTRY_POLICY_AUTO,
-    };
-    *country = s_default_country;
+    *country = s_country;
     return ESP_OK;
 }
 
@@ -143,8 +223,8 @@ esp_err_t esp_wifi_get_country_code(char *country)
     if (!country) {
         return ESP_ERR_INVALID_ARG;
     }
-    country[0] = 'C';
-    country[1] = 'N';
+    country[0] = s_country.cc[0] ? s_country.cc[0] : 'C';
+    country[1] = s_country.cc[1] ? s_country.cc[1] : 'N';
     country[2] = '\0';
     return ESP_OK;
 }
@@ -155,7 +235,12 @@ esp_err_t esp_wifi_get_country_code(char *country)
 
 esp_err_t esp_wifi_set_max_tx_power(int8_t power)
 {
-    ESP_LOGD(TAG, "set_max_tx_power(%d) — no-op in QEMU", power);
+    /* IDF spec: range 8..84 in 0.25 dBm units (= 2..21 dBm). */
+    if (power < 8 || power > 84) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_max_tx_power_qdbm = power;
+    ESP_LOGD(TAG, "set_max_tx_power(%d * 0.25 dBm)", power);
     return ESP_OK;
 }
 
@@ -164,7 +249,7 @@ esp_err_t esp_wifi_get_max_tx_power(int8_t *power)
     if (!power) {
         return ESP_ERR_INVALID_ARG;
     }
-    *power = 20; /* 20 dBm */
+    *power = s_max_tx_power_qdbm;
     return ESP_OK;
 }
 
@@ -174,17 +259,20 @@ esp_err_t esp_wifi_get_max_tx_power(int8_t *power)
 
 esp_err_t esp_wifi_set_protocol(wifi_interface_t ifx, uint8_t protocol_bitmap)
 {
-    ESP_LOGD(TAG, "set_protocol(ifx=%d, 0x%02x) — no-op in QEMU",
-             ifx, protocol_bitmap);
+    if ((unsigned)ifx >= QEMU_WIFI_IF_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_protocol[ifx] = protocol_bitmap;
+    ESP_LOGD(TAG, "set_protocol(ifx=%d, 0x%02x)", ifx, protocol_bitmap);
     return ESP_OK;
 }
 
 esp_err_t esp_wifi_get_protocol(wifi_interface_t ifx, uint8_t *protocol_bitmap)
 {
-    if (!protocol_bitmap) {
+    if (!protocol_bitmap || (unsigned)ifx >= QEMU_WIFI_IF_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
-    *protocol_bitmap = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
+    *protocol_bitmap = s_protocol[ifx];
     return ESP_OK;
 }
 

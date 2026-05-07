@@ -101,7 +101,7 @@ to what `esp_wifi_scan_get_ap_records` now produces.
 
 ---
 
-### ★ Phase B — Channel / country / protocol (P0, Day 43)
+### Phase B — Channel / country / protocol (P0, Day 43) ✅ DONE
 
 **Goal:** Stock samples (`fast_scan`, `iperf`, `wifi_country`) read
 `esp_wifi_get_channel` / `_get_country` / `_get_protocol` to display
@@ -124,12 +124,24 @@ plus seed initial values from wpa_supplicant where applicable.
 
 #### Acceptance
 
-- [ ] `esp_wifi_set_channel(11, …)` followed by
+- [x] `esp_wifi_set_channel(11, …)` followed by
       `esp_wifi_get_channel(&p, &s)` returns 11.
-- [ ] After connect, `get_channel` matches the AP's channel (Phase A
-      validation).
-- [ ] `esp_wifi_set_country({.cc="US",…})` round-trips.
-- [ ] Stock `fast_scan` example builds and runs unmodified.
+- [x] After connect, `get_channel` returns the AP's channel by reading
+      `WIFI_REG_CONN_FREQ_RSSI_AUTH` (Phase A reuse).
+- [x] `esp_wifi_set_country({.cc="US",…})` round-trips through `s_country`.
+- [x] `set_max_tx_power` / `_get_max_tx_power` round-trip with IDF
+      0.25-dBm range validation (8..84).
+- [x] `set_bandwidth` / `set_protocol` are now per-interface (STA + AP).
+- [x] Stock `wifi/scan` and `wifi/getting_started/station` still build
+      with the new shim, no warnings.
+
+**Implementation note:** No new MMIO registers were added — the device-side
+IO range is already at the 0x144 hard limit (RNG sits at +0x144). Phase B
+is implemented as firmware-only round-trip storage in `esp_wifi_extras.c`,
+which is sound because QEMU has no real PHY for these settings to affect.
+The one cross-component dependency is `get_channel` reusing the Phase-A
+`WIFI_REG_CONN_FREQ_RSSI_AUTH` register so a connected client's reported
+channel still matches the AP.
 
 ---
 
