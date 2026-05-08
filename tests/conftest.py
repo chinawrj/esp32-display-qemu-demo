@@ -21,7 +21,14 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG = Path("/tmp/esp32-qemu-serial.log")
+DEFAULT_VRAM = Path("/tmp/esp32-rgb-vram.bin")
 MAX_LOG_AGE_S = 30 * 60  # 30 minutes — firmware is deterministic, log can be reused
+# Maximum allowed delta between the QEMU serial log mtime and the VRAM file
+# mtime when reusing cached artifacts.  If the two files diverge by more than
+# this many seconds, they came from different boots and pairwise tests like
+# test_vram_snapshot_matches_uart_dump will produce confusing failures.  We
+# rebuild both rather than risk a stale mismatch.
+MAX_PAIR_SKEW_S = 5 * 60
 
 
 def _log_is_fresh(path: Path) -> bool:
@@ -29,6 +36,19 @@ def _log_is_fresh(path: Path) -> bool:
         return False
     age = time.time() - path.stat().st_mtime
     return age <= MAX_LOG_AGE_S and path.stat().st_size > 0
+
+
+def _artifacts_paired(log: Path, vram: Path) -> bool:
+    """Both artifacts present, fresh, and produced by the same boot.
+
+    The VRAM file is much larger than the log and is closed later in the
+    QEMU teardown sequence, so its mtime is normally a few seconds *after*
+    the log's.  Allow a generous skew to absorb that.
+    """
+    if not (_log_is_fresh(log) and vram.is_file() and vram.stat().st_size > 0):
+        return False
+    skew = abs(vram.stat().st_mtime - log.stat().st_mtime)
+    return skew <= MAX_PAIR_SKEW_S
 
 
 @pytest.fixture(scope="session")
@@ -45,7 +65,7 @@ def qemu_log() -> Path:
             pytest.skip(f"ESP32_QEMU_LOG points to missing file: {path}")
         return path
 
-    if _log_is_fresh(DEFAULT_LOG):
+    if _artifacts_paired(DEFAULT_LOG, DEFAULT_VRAM):
         return DEFAULT_LOG
 
     bin_path = PROJECT_ROOT / "build" / "esp32-display-qemu-demo.bin"
@@ -66,11 +86,26 @@ def qemu_log() -> Path:
     # nominal 18x slowdown that needs ~198 wall seconds.  Add a 56% margin
     # (300 s → 16 667 ms firmware) so variance in QEMU emulation speed does
     # not produce an incomplete log that conftest then caches as "fresh".
+    #
+    # Day-48: always export ESP_RGB_VRAM_FILE so the serial log and the
+    # VRAM dump are produced by the SAME boot.  Without this, a previous
+    # run that did set the env can leave a stale VRAM file alongside a
+    # newer log, making test_vram_snapshot_matches_uart_dump fail with a
+    # confusing pixel diff instead of skipping cleanly.
+    env = os.environ.copy()
+    env.setdefault("ESP_RGB_VRAM_FILE", str(DEFAULT_VRAM))
+    # Drop the stale VRAM file so the next boot creates a fresh one whose
+    # mtime is paired with the new log.
+    try:
+        DEFAULT_VRAM.unlink()
+    except FileNotFoundError:
+        pass
     subprocess.run(
         ["bash", str(script), "300", "verify"],
         cwd=PROJECT_ROOT,
         check=False,
         timeout=390,
+        env=env,
     )
 
     if not DEFAULT_LOG.is_file() or DEFAULT_LOG.stat().st_size == 0:

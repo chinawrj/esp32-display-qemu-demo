@@ -61,17 +61,38 @@ def test_vram_file_created_when_env_set():
     assert len(head) == 16
 
 
-def test_vram_snapshot_matches_uart_dump():
+def test_vram_snapshot_matches_uart_dump(qemu_log):
     """Day-19: the firmware writes a frozen snapshot at y=200 on flush #80,
     mirroring exactly what the existing UART base64 path dumps. Bytes must
     match. This is the first end-to-end check that LVGL pixels reach the
-    QEMU VRAM region."""
+    QEMU VRAM region.
+
+    Depending on the ``qemu_log`` fixture forces conftest to (re)boot QEMU
+    with ``ESP_RGB_VRAM_FILE`` exported when no paired (log, VRAM) cache
+    exists, so this test never sees a serial log paired with a stale VRAM
+    file from a different boot.
+    """
     import base64
 
     vram_path = pathlib.Path(os.environ.get("ESP_RGB_VRAM_FILE", "/tmp/esp32-rgb-vram.bin"))
-    log_path = pathlib.Path(os.environ.get("ESP32_QEMU_LOG", "/tmp/esp32-qemu-serial.log"))
-    if not vram_path.exists() or not log_path.exists():
-        pytest.skip("VRAM file or QEMU log not present — run instrumented boot first")
+    log_path = pathlib.Path(qemu_log)
+    if not vram_path.exists():
+        pytest.skip(
+            f"VRAM file {vram_path} not present — conftest could not pair "
+            "it with the serial log; re-run with QEMU env available"
+        )
+
+    # Stale-pairing guard: the serial log and the VRAM file must come from
+    # the same boot.  conftest enforces this on its auto-boot path, but an
+    # externally-provided ESP32_QEMU_LOG (e.g. CI cache) may not pair
+    # correctly with whatever VRAM file happens to live at the env path.
+    skew = abs(vram_path.stat().st_mtime - log_path.stat().st_mtime)
+    if skew > 5 * 60:
+        pytest.skip(
+            f"VRAM file ({vram_path}) and serial log ({log_path}) differ "
+            f"in mtime by {skew:.0f}s — they came from different boots. "
+            "Delete both and re-run, or unset ESP32_QEMU_LOG."
+        )
 
     # Skip if the log has no FB= lines — it was produced by a run that either
     # predates fb_dump_base64() or did not use the correct firmware binary.
