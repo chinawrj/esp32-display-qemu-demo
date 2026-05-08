@@ -36,6 +36,12 @@ A given sample is "supported" when:
 - Stock samples that build & runtime-pass:
   `wifi/getting_started/station`, `wifi/scan`, `wifi/getting_started/softAP`,
   `protocols/sockets/tcp_client`, `protocols/sockets/udp_client`.
+- Stock samples that **build clean** with zero source diff (build-only
+  coverage in the release smoke gate, Day 48):
+  `wifi/fast_scan` (exercises Phase A connection AP record + Phase B
+  channel/auth/cipher), `wifi/power_save` (exercises Phase C
+  `esp_wifi_set_ps` round-trip).  Runtime is gated on Kconfig SSID /
+  console UART input that the smoke harness does not provision.
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

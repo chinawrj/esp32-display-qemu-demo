@@ -35,9 +35,18 @@ mkdir -p "$LOG_DIR"
 printf "sample\tprofile\tbuild\trun\tbuild_log\trun_log\tserial_log\n" >"$SUMMARY_FILE"
 
 SAMPLES=(
-    "station|${IDF_PATH}/examples/wifi/getting_started/station|station"
-    "scan|${IDF_PATH}/examples/wifi/scan|scan"
-    "softAP|${IDF_PATH}/examples/wifi/getting_started/softAP|softap"
+    "station|${IDF_PATH}/examples/wifi/getting_started/station|station|run"
+    "scan|${IDF_PATH}/examples/wifi/scan|scan|run"
+    "softAP|${IDF_PATH}/examples/wifi/getting_started/softAP|softap|run"
+    # Day-48: build-only coverage for samples whose runtime depends on
+    # config knobs (fast_scan SSID Kconfig) or console UART (power_save
+    # get_ap_info_from_stdin) that the smoke gate does not provision.
+    # Build success here proves Phase A (real connection AP record),
+    # Phase B (channel / auth / cipher tracking) and Phase C
+    # (esp_wifi_set_ps round-trip) are wide enough for the stock
+    # esp_wifi.h surface these samples invoke.
+    "fast_scan|${IDF_PATH}/examples/wifi/fast_scan|station|build_only"
+    "power_save|${IDF_PATH}/examples/wifi/power_save|station|build_only"
 )
 
 PASS=0
@@ -47,6 +56,7 @@ run_one() {
     local name="$1"
     local sample_dir="$2"
     local profile="$3"
+    local mode="${4:-run}"           # run | build_only
     local build_dir="${sample_dir}/build_qemu"
     local build_log="${LOG_DIR}/${name}-build.log"
     local run_log="${LOG_DIR}/${name}-run.log"
@@ -61,6 +71,16 @@ run_one() {
     else
         echo "[basic-wifi-smoke] ${name}: build failed (log: ${build_log})"
         FAIL=$((FAIL + 1))
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+            "$name" "$profile" "$build_status" "$run_status" \
+            "$build_log" "$run_log" "$serial_log" >>"$SUMMARY_FILE"
+        return
+    fi
+
+    if [ "$mode" = "build_only" ]; then
+        echo "[basic-wifi-smoke] ${name}: run skipped (build_only)"
+        run_status="build_only"
+        PASS=$((PASS + 1))
         printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
             "$name" "$profile" "$build_status" "$run_status" \
             "$build_log" "$run_log" "$serial_log" >>"$SUMMARY_FILE"
@@ -90,8 +110,8 @@ echo "[basic-wifi-smoke] SUMMARY_FILE=${SUMMARY_FILE}"
 echo "[basic-wifi-smoke] DURATION=${DURATION}"
 
 for entry in "${SAMPLES[@]}"; do
-    IFS='|' read -r name sample_dir profile <<<"$entry"
-    run_one "$name" "$sample_dir" "$profile"
+    IFS='|' read -r name sample_dir profile mode <<<"$entry"
+    run_one "$name" "$sample_dir" "$profile" "${mode:-run}"
 done
 
 echo ""

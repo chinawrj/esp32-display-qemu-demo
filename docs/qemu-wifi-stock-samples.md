@@ -16,6 +16,20 @@ defaults.
 | `examples/wifi/scan/` | `scan` | `Total APs scanned = 1` and `SSID QEMU_TEST` |
 | `examples/wifi/getting_started/softAP/` | `softap` | `wifi_init_softap finished` |
 
+### Build-only coverage (Day 48)
+
+The release smoke gate also builds the following samples to prove that the
+QEMU Wi-Fi shim implements a wide enough subset of `esp_wifi.h` for them to
+link with **zero source modification** (only `CMakeLists.txt` +
+`sdkconfig.defaults` differ).  Their runtime is not exercised by the gate
+because it depends on knobs the gate does not provision (sample-specific
+Kconfig SSID / console UART input).
+
+| ESP-IDF sample | What it proves builds clean |
+|----------------|-----------------------------|
+| `examples/wifi/fast_scan/` | Phase A connection AP record + Phase B channel / authmode / cipher tracking |
+| `examples/wifi/power_save/` | Phase C `esp_wifi_set_ps` / `esp_wifi_get_ps` round-trip |
+
 ## Prerequisites
 
 - ESP-IDF v5.5 or newer is installed and `IDF_PATH` points to it.

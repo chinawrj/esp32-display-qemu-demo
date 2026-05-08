@@ -121,6 +121,29 @@ def test_basic_wifi_smoke_records_run_failures():
     assert "run_status=\"ok\"" in content
 
 
+def test_basic_wifi_smoke_includes_phase_abc_build_only_samples():
+    """Day-48: fast_scan and power_save extend the release gate as
+    build-only samples.  Their successful build proves Phase A (real
+    connection AP record), Phase B (channel/auth/cipher) and Phase C
+    (esp_wifi_set_ps round-trip) are wide enough for the stock
+    esp_wifi.h surface, even though their runtime depends on
+    config knobs (Kconfig SSID, console UART) that the smoke gate
+    does not provision.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    for sample in ("examples/wifi/fast_scan", "examples/wifi/power_save"):
+        assert sample in script, f"basic smoke gate missing {sample}"
+    # The 4-field SAMPLES entry format must include the build_only marker.
+    assert "fast_scan|" in script and "|build_only" in script
+    assert "power_save|" in script
+    # And run_one must support the build_only mode.
+    assert 'mode="${4:-run}"' in script
+    assert 'mode" = "build_only"' in script
+    # build_only samples are still counted as PASS (gate is green when
+    # build succeeds, even though run is skipped).
+    assert 'run_status="build_only"' in script
+
+
 def test_stock_sample_release_doc_exists():
     doc = DOCS_DIR / "qemu-wifi-stock-samples.md"
     assert doc.exists(), "stock Wi-Fi sample release guide is missing"

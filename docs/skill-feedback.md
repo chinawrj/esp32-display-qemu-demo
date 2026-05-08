@@ -129,3 +129,11 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: Naive implementation of `esp_wifi_80211_tx` would (a) deliver the raw 802.11 frame to `s_promisc_rx_cb`, then (b) decode DATA + LLC/SNAP into Ethernet and call `qemu_wifi_tx_raw()` to put it on the wire. But `qemu_wifi_tx_raw()` itself calls `qemu_promisc_deliver_eth()`, which fabricates a *new* 802.11 wrap around the same payload — sniffers would log every 80211_tx twice with different headers. Solution: introduce `qemu_wifi_tx_raw_no_promisc()` in `esp_wifi_netif.c`, exposed via `esp_wifi_private.h`, and have `80211_tx` use that for the Ethernet projection. Source-analysis test asserts the helper exists and does NOT call the deliver helper.
 - **Workaround**: documented in BACKLOG Phase-E and in source comments above `qemu_wifi_tx_raw_no_promisc`.
 - **Priority**: low
+
+### FB-017 (2026-05-08)
+- **Skill**: automated-testing / release-smoke-gate
+- **Category**: improvement
+- **Summary**: Extended `tools/run-basic-wifi-smoke.sh` to support a `build_only` mode for samples whose runtime depends on Kconfig SSID overrides or console UART input that the gate does not provision. Added `wifi/fast_scan` and `wifi/power_save` as build-only release samples to prove Phase A/B/C API surface is wide enough for the stock `esp_wifi.h` consumers.
+- **Detail**: `wifi/iperf` would be a natural Phase-C runtime sample but its `idf_component.yml` requires `https://components-file.espressif.com/`, which the development host blocks. `wifi/fast_scan` builds clean (proves Phase A connection AP record + Phase B channel/auth/cipher are linkable) but defaults to SSID `myssid` from Kconfig — overriding via gate-only env would require either patching the sample or a complex Kconfig cascade. `wifi/power_save` builds clean (proves Phase C `esp_wifi_set_ps`) but its `EXAMPLE_GET_AP_INFO_FROM_STDIN` path needs interactive UART input. Solution: 4-field SAMPLES entry (`name|sample_dir|profile|run_or_build_only`) where `build_only` records build success as PASS and skips the runtime stage. The release contract (`docs/qemu-wifi-stock-samples.md`) gains a "Build-only coverage" subsection so users know what each sample actually proves.
+- **Workaround**: none needed — `build_only` is the supported solution.
+- **Priority**: medium
