@@ -803,6 +803,120 @@ class TestSourceFiles:
         tx_body = src[tx_idx:tx_idx + 600]
         assert "qemu_promisc_deliver_eth(buffer, len, true)" in tx_body
 
+    def test_build_stock_sample_handles_custom_partitions_and_priv_requires(self, tmp_path):
+        """Phase-E tooling: build-stock-sample.sh must
+           (a) symlink any partitions*.csv from sample root into the wrapper
+               project root so CONFIG_PARTITION_TABLE_CUSTOM_FILENAME (relative
+               path in sample's sdkconfig.defaults) resolves correctly,
+           (b) merge the sample's PRIV_REQUIRES into the wrapper's REQUIRES so
+               samples that need extra components (console, fatfs, esp_eth,
+               app_trace, unity, ...) link without source modification,
+           (c) symlink the sample's idf_component.yml so managed-component
+               manifests are honored,
+           (d) honor the EXTRA_SDKCONFIG_DEFAULTS env var.
+        """
+        # Build a synthetic sample tree.
+        sample = tmp_path / "fake_sample"
+        (sample / "main").mkdir(parents=True)
+        (sample / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.16)\n"
+            "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+            "project(fake_sample)\n"
+        )
+        (sample / "sdkconfig.defaults").write_text(
+            'CONFIG_PARTITION_TABLE_CUSTOM=y\n'
+            'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_example.csv"\n'
+        )
+        (sample / "partitions_example.csv").write_text(
+            "# Name, Type, SubType, Offset, Size, Flags\n"
+            "nvs, data, nvs, 0x9000, 0x6000,\n"
+        )
+        (sample / "main" / "fake_main.c").write_text("void app_main(void){}\n")
+        (sample / "main" / "CMakeLists.txt").write_text(
+            'idf_component_register(SRCS "fake_main.c"\n'
+            '    INCLUDE_DIRS "."\n'
+            '    PRIV_REQUIRES console fatfs esp_eth app_trace nvs_flash)\n'
+        )
+        (sample / "main" / "idf_component.yml").write_text(
+            "dependencies:\n  idf: '>=5.0'\n"
+        )
+
+        # Stub IDF_PATH + idf.py so the script does not actually build.  We
+        # only care about wrapper-generation side effects.
+        fake_idf = tmp_path / "idf"
+        (fake_idf / "tools" / "cmake").mkdir(parents=True)
+        (fake_idf / "tools" / "cmake" / "project.cmake").write_text("# stub\n")
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "idf.py").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (bin_dir / "idf.py").chmod(0o755)
+
+        wrap_dir = sample / "_qemu_wrap_fake_sample"
+        env = os.environ.copy()
+        env["IDF_PATH"] = str(fake_idf)
+        env["PATH"] = f"{bin_dir}:{env['PATH']}"
+        env["BUILD_DIR"] = str(sample / "build_qemu")
+        # Caller-supplied overlay (path doesn't need to exist for the script
+        # to assemble it; idf.py is stubbed and never validates).
+        extra_overlay = tmp_path / "extra.sdkconfig"
+        extra_overlay.write_text("CONFIG_SNIFFER_PCAP_DESTINATION_MEMORY=y\n")
+        env["EXTRA_SDKCONFIG_DEFAULTS"] = str(extra_overlay)
+
+        result = subprocess.run(
+            ["bash", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"build-stock-sample.sh failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
+        )
+
+        # (a) partitions_example.csv must be symlinked into wrapper root.
+        wrap_csv = wrap_dir / "partitions_example.csv"
+        assert wrap_csv.is_symlink(), (
+            f"partitions_example.csv not symlinked into {wrap_dir}"
+        )
+        assert wrap_csv.resolve() == (sample / "partitions_example.csv").resolve()
+
+        # (b) Wrapper main/CMakeLists.txt must merge PRIV_REQUIRES into REQUIRES
+        #     and always include esp_wifi_qemu.
+        wrap_main_cmake = (wrap_dir / "main" / "CMakeLists.txt").read_text()
+        assert "esp_wifi_qemu" in wrap_main_cmake
+        for needed in ("console", "fatfs", "esp_eth", "app_trace", "nvs_flash"):
+            assert needed in wrap_main_cmake, (
+                f"merged REQUIRES missing '{needed}':\n{wrap_main_cmake}"
+            )
+        # esp_wifi_qemu must appear exactly once (de-duped).
+        assert wrap_main_cmake.count("esp_wifi_qemu") == 1
+        # Sources are referenced by absolute path (so the wrapper main dir
+        # does not need a .c file copy).
+        assert str(sample / "main" / "fake_main.c") in wrap_main_cmake
+
+        # (c) idf_component.yml is symlinked into wrapper main.
+        wrap_yml = wrap_dir / "main" / "idf_component.yml"
+        assert wrap_yml.is_symlink()
+        assert wrap_yml.resolve() == (sample / "main" / "idf_component.yml").resolve()
+
+        # (d) EXTRA_SDKCONFIG_DEFAULTS must end up in the SDKCONFIG_DEFAULTS
+        #     CMake invocation.  We grep the script's stdout banner.
+        # The script's last `idf.py ... build` invocation is captured because
+        # idf.py is a stub.  The SDKCONFIG_DEFAULTS string is assembled in
+        # shell; verify it indirectly by re-running the script with bash -x
+        # and checking the final command line.
+        result_x = subprocess.run(
+            ["bash", "-x", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        combined = result_x.stdout + result_x.stderr
+        assert str(extra_overlay) in combined, (
+            "EXTRA_SDKCONFIG_DEFAULTS overlay not appended to SDKCONFIG_DEFAULTS"
+        )
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

@@ -105,3 +105,11 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: During Day 27 regression, `wifi/scan` built and reached the QEMU mock scan path, but `run-stock-qemu.sh` still reported failures because its default verification expects STA connect/Got IP patterns in the QEMU serial log. For scan, the useful evidence is scan result handling (`QEMU_TEST` / AP records), and today that appeared in helper output rather than the serial-only `LOG_FILE` used by the verifier.
 - **Workaround**: Treat scan runtime as a manual smoke check for now: inspect the full redirected log for `QEMU_TEST`, and use `SKIP_CONNECTED=1` when running scan. Long-term, add sample profiles or a verifier log that captures both QEMU serial and helper output.
 - **Priority**: medium
+
+### FB-014 (2026-05-08)
+- **Skill**: esp32-build-flash / tools/build-stock-sample.sh
+- **Category**: improvement
+- **Summary**: Stock-sample builder lost extra component dependencies (`console`, `fatfs`, `esp_eth`, `app_trace`, `unity`, ...) and could not handle samples with custom `partitions_example.csv` referenced by relative path in `sdkconfig.defaults`.
+- **Detail**: The wrapper-project generator hardcoded `REQUIRES esp_wifi esp_event esp_netif nvs_flash esp_wifi_qemu`, dropping every `PRIV_REQUIRES` listed in the sample's `main/CMakeLists.txt`. This worked for the four bare-WiFi samples (station/scan/softAP/tcp_client) but broke for `network/simple_sniffer`, `wifi/iperf`, and any sample that uses console/fatfs/etc. Additionally, `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_example.csv"` resolves relative to the wrapper-project root (not the sample dir), so custom partition CSVs were never visible to CMake.
+- **Workaround**: Day-48 fix: extract `REQUIRES` + `PRIV_REQUIRES` from the sample's main `CMakeLists.txt` (multi-line tolerant awk), merge with our base set, de-dupe; symlink any `partitions*.csv` from sample root into the wrapper; symlink `idf_component.yml`; expose `EXTRA_SDKCONFIG_DEFAULTS` env var for sample-specific Kconfig overrides allowed by the zero-source-diff policy. Verified with a synthetic-sample pytest. Live `simple_sniffer` smoke now blocked only on offline `components-file.espressif.com` for the managed `pcap` dep.
+- **Priority**: high

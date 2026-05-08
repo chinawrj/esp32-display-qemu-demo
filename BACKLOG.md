@@ -265,12 +265,24 @@ Real 802.11 management/control frames are out of scope.
 
 #### Remaining
 
+- [x] **Day 48 — tooling unblocked**: `tools/build-stock-sample.sh`
+      now (a) symlinks any `partitions*.csv` from the sample root into the
+      wrapper project root so `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME`
+      relative-path lookups resolve, (b) parses the sample's
+      `main/CMakeLists.txt` and merges its `REQUIRES` + `PRIV_REQUIRES`
+      with our base set (de-duped), so samples needing extra components
+      (`console`, `fatfs`, `esp_eth`, `app_trace`, `unity`, ...) link
+      with zero source diff, (c) symlinks the sample's main
+      `idf_component.yml` so managed-component manifests are honored,
+      (d) accepts an `EXTRA_SDKCONFIG_DEFAULTS` env var for runtime
+      overrides allowed by the zero-diff policy.  Verified by a
+      synthetic-sample pytest (`test_build_stock_sample_handles_custom_
+      partitions_and_priv_requires`).
 - [ ] Live runtime smoke with stock `network/simple_sniffer` —
-      blocked on `tools/build-stock-sample.sh` not handling samples
-      with custom `partitions_example.csv`. Tooling fix is its own
-      workday and is independent of the firmware wiring (which is
-      already reachable via any sample that calls
-      `esp_wifi_set_promiscuous(true)`).
+      tooling now generates a clean wrapper, but this host blocks
+      `https://components-file.espressif.com/`, so the sample's managed
+      `espressif/pcap` dependency cannot be fetched.  Re-run on a
+      machine with component-registry access to close.
 - [ ] Capture management/control frame fabrication when stock
       samples need beacons (Phase F sub-item).
 
