@@ -31,6 +31,12 @@ int qemu_wifi_tx_raw(const void *buffer, uint16_t len);
 void      qemu_wifi_ap_clear_stations(void);
 esp_err_t qemu_wifi_ap_inject_fake_station(uint8_t index);
 
+/* Day-47 Phase-E: deliver an Ethernet frame to the registered promiscuous
+ * RX callback (wraps it in a fabricated 802.11 DATA header).  No-op when
+ * promiscuous mode is disabled or no callback is registered.  Called from
+ * the netif RX/TX paths regardless of whether the firmware enables promisc. */
+void qemu_promisc_deliver_eth(const void *eth_frame, size_t eth_len, bool from_tx);
+
 extern wifi_config_t s_sta_cfg;
 
 #endif /* CONFIG_ESP_WIFI_QEMU */

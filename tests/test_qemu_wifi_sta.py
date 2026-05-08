@@ -762,6 +762,47 @@ class TestSourceFiles:
         # AP netif lookup by ifkey.
         assert "WIFI_AP_DEF" in src
 
+    def test_phase_e_promisc_cb_storage_and_helper(self):
+        """Phase-E: promiscuous RX callback is stored and a deliver helper exists."""
+        promisc = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_promisc.c"
+        src = promisc.read_text()
+        assert "s_promisc_rx_cb" in src, "promisc RX callback storage missing"
+        # set_promiscuous_rx_cb must store the callback (not just log).
+        sc_idx = src.find("esp_wifi_set_promiscuous_rx_cb(wifi_promiscuous_cb_t cb)")
+        assert sc_idx != -1
+        sc_body = src[sc_idx:sc_idx + 200]
+        assert "s_promisc_rx_cb = cb" in sc_body
+        # qemu_promisc_deliver_eth is the public wrap helper.
+        assert "qemu_promisc_deliver_eth" in src
+        # 802.11 DATA frame fabrication: type=Data (FC byte = 0x08).
+        assert "0x08" in src
+        # LLC/SNAP shim AA AA 03 ...
+        assert "0xAA" in src and "0x03" in src
+        # Guards: enabled + cb + DATA mask.
+        assert "WIFI_PROMIS_FILTER_MASK_DATA" in src
+        # Virtual AP MAC for fabricated BSSID.
+        assert "s_qemu_virtual_bssid" in src
+
+    def test_phase_e_promisc_tap_in_netif(self):
+        """Phase-E: netif RX/TX paths call qemu_promisc_deliver_eth."""
+        netif = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_netif.c"
+        src = netif.read_text()
+        # Must call deliver helper from both directions.
+        assert src.count("qemu_promisc_deliver_eth(") >= 3, (
+            "promiscuous tap missing on at least one of: qemu_wifi_transmit, "
+            "qemu_wifi_tx_raw, esp_wifi_netif_rx_frame"
+        )
+        # RX path tap.
+        rx_idx = src.find("esp_wifi_netif_rx_frame(void)")
+        assert rx_idx != -1
+        rx_body = src[rx_idx:rx_idx + 1500]
+        assert "qemu_promisc_deliver_eth(buf, rx_len, false)" in rx_body
+        # TX raw path tap.
+        tx_idx = src.find("qemu_wifi_tx_raw(const void *buffer, uint16_t len)")
+        assert tx_idx != -1
+        tx_body = src[tx_idx:tx_idx + 600]
+        assert "qemu_promisc_deliver_eth(buffer, len, true)" in tx_body
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

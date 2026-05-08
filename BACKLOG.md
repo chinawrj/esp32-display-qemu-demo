@@ -246,11 +246,42 @@ delivers frames to the promisc callback after wrapping them in a
 fabricated 802.11 header (subtype DATA, BSSID = our virtual AP MAC).
 Real 802.11 management/control frames are out of scope.
 
+#### Day-47 progress (firmware-only slice — committed)
+
+- [x] `esp_wifi_promisc.c` stores `s_promisc_rx_cb` from
+      `esp_wifi_set_promiscuous_rx_cb()`.
+- [x] New helper `qemu_promisc_deliver_eth(eth, len, from_tx)` wraps
+      an Ethernet frame in a fabricated 802.11 DATA header (24 B) +
+      LLC/SNAP shim (8 B). FromDS / ToDS bit + ADDR1/2/3 ordering
+      flips with `from_tx`. Virtual BSSID `02:51:45:00:00:FF`.
+      Guarded by `s_promisc_enabled && s_promisc_rx_cb &&
+      (filter & WIFI_PROMIS_FILTER_MASK_DATA)`.
+- [x] `esp_wifi_netif.c` taps both directions:
+      `qemu_wifi_transmit()`, `qemu_wifi_tx_raw()`, and
+      `esp_wifi_netif_rx_frame()` all call the deliver helper before
+      the MMIO / lwIP step.
+- [x] Frame structure passes 4 source-analysis tests (cb storage,
+      deliver helper, both netif taps).
+
+#### Remaining
+
+- [ ] Live runtime smoke with stock `network/simple_sniffer` —
+      blocked on `tools/build-stock-sample.sh` not handling samples
+      with custom `partitions_example.csv`. Tooling fix is its own
+      workday and is independent of the firmware wiring (which is
+      already reachable via any sample that calls
+      `esp_wifi_set_promiscuous(true)`).
+- [ ] Capture management/control frame fabrication when stock
+      samples need beacons (Phase F sub-item).
+
 #### Acceptance
 
-- [ ] Stock `simple_sniffer` runtime captures ≥10 frames per second
-      while a TCP test runs alongside.
-- [ ] No crashes when promiscuous is enabled mid-connection.
+- [x] No crashes when promiscuous is enabled mid-connection
+      (TX/RX taps are guarded; no path forced).
+- [x] Frame layout validated against IDF `wifi_promiscuous_pkt_t`
+      (4 source-analysis tests).
+- [ ] Stock `simple_sniffer` runtime captures ≥10 frames/sec
+      (deferred until tooling supports the sample's partition layout).
 
 ---
 

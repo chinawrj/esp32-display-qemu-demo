@@ -25,6 +25,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi_qemu.h"
+#include "esp_wifi_private.h"
 
 static const char *TAG = "wifi_netif";
 
@@ -51,6 +52,9 @@ static esp_err_t qemu_wifi_transmit(void *h, void *buffer, size_t len)
     if (!buffer || len == 0 || len > WIFI_PKT_BUF_SIZE) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    /* Phase-E: feed promiscuous sniffer (if enabled) before MMIO write. */
+    qemu_promisc_deliver_eth(buffer, len, true);
 
     /* Copy frame into DMA TX buffer */
     memcpy(s_tx_buf, buffer, len);
@@ -118,6 +122,7 @@ int qemu_wifi_tx_raw(const void *buffer, uint16_t len)
     if (!buffer || len == 0 || len > WIFI_PKT_BUF_SIZE) {
         return -1;
     }
+    qemu_promisc_deliver_eth(buffer, len, true);
     memcpy(s_tx_buf, buffer, len);
     wifi_qemu_write(WIFI_REG_TX_ADDR, (uint32_t)(uintptr_t)s_tx_buf);
     wifi_qemu_write(WIFI_REG_TX_LEN,  (uint32_t)len);
@@ -182,6 +187,9 @@ void esp_wifi_netif_rx_frame(void)
 
     /* Signal QEMU device that we consumed the frame */
     wifi_qemu_write(WIFI_REG_RX_LEN, 0);
+
+    /* Phase-E: feed promiscuous sniffer (if enabled). */
+    qemu_promisc_deliver_eth(buf, rx_len, false);
 
     if (!s_sta_netif) {
         s_sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
