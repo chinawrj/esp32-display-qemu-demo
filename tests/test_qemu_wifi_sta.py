@@ -747,6 +747,21 @@ class TestSourceFiles:
         assert "ESP_WIFI_QEMU_AP_FAKE_CLIENTS" in src
         assert "range 0 4" in src
 
+    def test_phase_d2_ap_staipassigned_event(self):
+        """Phase-D2: fake-station inject must also post IP_EVENT_AP_STAIPASSIGNED."""
+        ap = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_ap.c"
+        src = ap.read_text()
+        assert "IP_EVENT_AP_STAIPASSIGNED" in src, (
+            "fake-station injector must fire IP_EVENT_AP_STAIPASSIGNED"
+        )
+        assert "ip_event_ap_staipassigned_t" in src
+        # Deterministic 192.168.4.(2+index) lease.
+        assert "(2 + index)" in src
+        # Table entry must record the assigned lease.
+        assert "assigned_ip" in src
+        # AP netif lookup by ifkey.
+        assert "WIFI_AP_DEF" in src
+
 
 # ---------------------------------------------------------------------------
 # QEMU device integration tests (require runtime environment)

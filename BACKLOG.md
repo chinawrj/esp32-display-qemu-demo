@@ -227,7 +227,8 @@ via `wifi_packet_relay.py`).
 - [x] Stock `softAP` runtime: `wifi_ap_get_sta_list` reports 2 entries
       with non-zero MACs.
 - [x] `WIFI_EVENT_AP_STACONNECTED` fires twice with deterministic AIDs.
-- [ ] `IP_EVENT_AP_STAIPASSIGNED` fires twice (Day-46 DHCP work).
+- [x] `IP_EVENT_AP_STAIPASSIGNED` fires twice (Day-46): deterministic
+      192.168.4.2 / 192.168.4.3 leases stored in `s_ap_table[].assigned_ip`.
 
 ---
 

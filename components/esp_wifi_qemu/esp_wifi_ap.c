@@ -25,6 +25,8 @@
 #include "esp_mac.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_netif_types.h"
 #include "esp_wifi_qemu.h"
 #include "esp_wifi_private.h"
 
@@ -40,6 +42,7 @@ typedef struct {
     uint8_t  mac[6];
     int8_t   rssi;
     wifi_phy_mode_t phy_mode;
+    uint32_t assigned_ip;   /* host-byte-order; 0 = not assigned */
 } qemu_ap_sta_t;
 
 static qemu_ap_sta_t s_ap_table[ESP_WIFI_MAX_CONN_NUM];
@@ -103,6 +106,27 @@ esp_err_t qemu_wifi_ap_inject_fake_station(uint8_t index)
                    &ev, sizeof(ev), portMAX_DELAY);
     ESP_LOGI(TAG, "fake station joined aid=%u mac=" MACSTR,
              (unsigned)e->aid, MAC2STR(e->mac));
+
+    /* Day-46: also fire IP_EVENT_AP_STAIPASSIGNED with deterministic
+     * 192.168.4.(2+index) lease so stock softAP samples that listen for
+     * IP_EVENT_AP_STAIPASSIGNED (and protocol_examples_common style
+     * helpers) see the assignment. */
+    esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    /* 192.168.4.(2 + index) in network byte order */
+    uint32_t ip_n = ((uint32_t)192) |
+                    ((uint32_t)168 << 8) |
+                    ((uint32_t)4   << 16) |
+                    ((uint32_t)(2 + index) << 24);
+    e->assigned_ip = ip_n;
+    ip_event_ap_staipassigned_t ip_ev = {
+        .esp_netif = ap_netif,
+        .ip        = { .addr = ip_n },
+    };
+    memcpy(ip_ev.mac, e->mac, 6);
+    esp_event_post(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED,
+                   &ip_ev, sizeof(ip_ev), portMAX_DELAY);
+    ESP_LOGI(TAG, "fake station ip assigned aid=%u ip=192.168.4.%u",
+             (unsigned)e->aid, (unsigned)(2 + index));
     return ESP_OK;
 }
 
