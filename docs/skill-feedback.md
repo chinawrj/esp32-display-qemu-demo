@@ -137,3 +137,11 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: `wifi/iperf` would be a natural Phase-C runtime sample but its `idf_component.yml` requires `https://components-file.espressif.com/`, which the development host blocks. `wifi/fast_scan` builds clean (proves Phase A connection AP record + Phase B channel/auth/cipher are linkable) but defaults to SSID `myssid` from Kconfig — overriding via gate-only env would require either patching the sample or a complex Kconfig cascade. `wifi/power_save` builds clean (proves Phase C `esp_wifi_set_ps`) but its `EXAMPLE_GET_AP_INFO_FROM_STDIN` path needs interactive UART input. Solution: 4-field SAMPLES entry (`name|sample_dir|profile|run_or_build_only`) where `build_only` records build success as PASS and skips the runtime stage. The release contract (`docs/qemu-wifi-stock-samples.md`) gains a "Build-only coverage" subsection so users know what each sample actually proves.
 - **Workaround**: none needed — `build_only` is the supported solution.
 - **Priority**: medium
+
+### FB-018 (2026-05-08)
+- **Skill**: automated-testing
+- **Category**: bug
+- **Summary**: A pytest test that reads a long-running subprocess via `proc.stdout.readline()` inside a deadline-bounded `while time.monotonic() < deadline` loop will block indefinitely past the deadline whenever the child goes silent — `readline()` only checks the deadline *after* it returns. `tests/test_qemu_lwip_probe.py::test_lwip_probe_ok_in_serial` regularly ran 20+ minutes against a 360s deadline because of this anti-pattern.
+- **Detail**: Fix is `select.select([fd], [], [], min(remaining, 1.0))` with `os.read` and a manual line-split buffer, plus a hard `proc.kill()` immediately after the read loop exits (so the `finally`-block `terminate(); wait(timeout=5)` cannot stall on a guest that ignores SIGTERM). With the fix, the test passes in ~12 s and worst-case runtime is bounded by the deadline. Lesson: any test that streams a long-running subprocess **must** use a non-blocking read (select / asyncio / dedicated reader thread), never a bare `.readline()` inside a deadline loop.
+- **Workaround**: none — the select-based pattern is the correct solution.
+- **Priority**: high

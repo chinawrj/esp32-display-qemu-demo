@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import select
 import socket
 import subprocess
 import sys
@@ -321,21 +322,50 @@ class TestLwipProbeRuntime:
             probe_ok   = False
             deadline   = time.monotonic() + _BOOT_TIMEOUT_S
 
+            # Day-48: use select() with the remaining-deadline as the read
+            # timeout. The previous .readline() loop blocked indefinitely past
+            # the deadline whenever QEMU went silent, causing 20+ minute hangs
+            # instead of the intended 360s ceiling.
             assert qemu_proc.stdout is not None
-            while time.monotonic() < deadline:
-                line = qemu_proc.stdout.readline()
-                if not line:
+            stdout_fd = qemu_proc.stdout.fileno()
+            buf = b""
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                ready, _, _ = select.select([stdout_fd], [], [], min(remaining, 1.0))
+                if not ready:
                     if qemu_proc.poll() is not None:
                         break
                     continue
-                decoded = line.decode("utf-8", errors="replace").rstrip()
-                serial_output.append(decoded)
-                if "got ip:" in decoded:
-                    got_ip = True
-                if "lwip probe ok:" in decoded:
-                    probe_ok = True
+                try:
+                    chunk = os.read(stdout_fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    if qemu_proc.poll() is not None:
+                        break
+                    continue
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    decoded = line.decode("utf-8", errors="replace").rstrip()
+                    serial_output.append(decoded)
+                    if "got ip:" in decoded:
+                        got_ip = True
+                    if "lwip probe ok:" in decoded:
+                        probe_ok = True
                 if got_ip and probe_ok:
                     break
+
+            # Day-48: hard-kill QEMU as soon as the read loop ends so the
+            # finally block's terminate()+wait(5) cannot stall on a guest that
+            # ignores SIGTERM.
+            if qemu_proc.poll() is None:
+                try:
+                    qemu_proc.kill()
+                except Exception:
+                    pass
 
             excerpt = "\n".join(serial_output[-40:])
             assert got_ip, (
@@ -353,5 +383,11 @@ class TestLwipProbeRuntime:
                 try:
                     p.terminate()
                     p.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        p.kill()
+                        p.wait(timeout=5)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
