@@ -144,6 +144,24 @@ def test_basic_wifi_smoke_includes_phase_abc_build_only_samples():
     assert 'run_status="build_only"' in script
 
 
+def test_basic_wifi_smoke_includes_softap_sta_build_only():
+    """Day-49: softap_sta is the only stock wifi example that runs APSTA
+    mode (STA + SoftAP simultaneously) in a single binary.  Building it
+    against the QEMU overlay with zero source diff proves Phase A + B +
+    C + D-1 + D-2 all link together cleanly for the same firmware image.
+    Runtime is gated on a configured upstream SSID and on lwIP NAPT,
+    which the smoke gate does not provision today, so the entry is
+    build_only.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    assert "examples/wifi/softap_sta" in script, (
+        "basic smoke gate missing softap_sta"
+    )
+    # 4-field entry, build_only mode, softap profile.
+    assert "softap_sta|" in script
+    assert "softap_sta|${IDF_PATH}/examples/wifi/softap_sta|softap|build_only" in script
+
+
 def test_stock_sample_release_doc_exists():
     doc = DOCS_DIR / "qemu-wifi-stock-samples.md"
     assert doc.exists(), "stock Wi-Fi sample release guide is missing"

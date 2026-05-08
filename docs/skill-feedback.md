@@ -145,3 +145,11 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: Fix is `select.select([fd], [], [], min(remaining, 1.0))` with `os.read` and a manual line-split buffer, plus a hard `proc.kill()` immediately after the read loop exits (so the `finally`-block `terminate(); wait(timeout=5)` cannot stall on a guest that ignores SIGTERM). With the fix, the test passes in ~12 s and worst-case runtime is bounded by the deadline. Lesson: any test that streams a long-running subprocess **must** use a non-blocking read (select / asyncio / dedicated reader thread), never a bare `.readline()` inside a deadline loop.
 - **Workaround**: none — the select-based pattern is the correct solution.
 - **Priority**: high
+
+### FB-019 (2026-05-09)
+- **Skill**: project-scaffolding / esp32-build-flash
+- **Category**: improvement
+- **Summary**: `examples/wifi/softap_sta` is the only stock sample that drives APSTA mode (STA + SoftAP simultaneously). Treating it as the canonical "single-image link-coverage" probe in the release smoke gate gave us the strongest no-runtime confirmation that Phase A + B + C + D-1 + D-2 of the QEMU Wi-Fi shim are mutually compatible.
+- **Detail**: The sample builds drop-in via `tools/build-stock-sample.sh` with **zero source diff** (binary 0x66dc0, 60% free). Runtime is gated on a real upstream STA SSID and on lwIP NAPT, which the smoke gate does not provision today, so the entry is `build_only`. Rationale for adding it even though we already have separate runtime coverage for getting_started/{station,softAP}: those each prove one mode at a time, leaving open the possibility of a regression where some Phase-A/B/C state symbol shadows a Phase-D AP table symbol (or vice versa) when the firmware imports both. softap_sta is the cheapest single-link probe for that class of regression.
+- **Workaround**: none.
+- **Priority**: medium

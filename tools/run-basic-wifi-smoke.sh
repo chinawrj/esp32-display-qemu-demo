@@ -47,6 +47,15 @@ SAMPLES=(
     # esp_wifi.h surface these samples invoke.
     "fast_scan|${IDF_PATH}/examples/wifi/fast_scan|station|build_only"
     "power_save|${IDF_PATH}/examples/wifi/power_save|station|build_only"
+    # Day-49: softap_sta is the only stock wifi sample that exercises
+    # APSTA mode (STA + SoftAP simultaneously) in a single binary.
+    # Build success proves Phase A (connection AP record) + Phase B
+    # (channel / auth / cipher) + Phase C (power-save) + Phase D-1/D-2
+    # (real AP station table + IPASSIGNED) all link together cleanly
+    # for the same firmware image. Runtime is gated on a configured
+    # upstream STA SSID and on lwIP NAPT, neither of which the smoke
+    # gate provisions.
+    "softap_sta|${IDF_PATH}/examples/wifi/softap_sta|softap|build_only"
 )
 
 PASS=0

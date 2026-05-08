@@ -42,6 +42,11 @@ A given sample is "supported" when:
   channel/auth/cipher), `wifi/power_save` (exercises Phase C
   `esp_wifi_set_ps` round-trip).  Runtime is gated on Kconfig SSID /
   console UART input that the smoke harness does not provision.
+- Day 49 — `wifi/softap_sta` joins the build-only set: it is the only
+  stock sample that runs APSTA mode, so building it against the QEMU
+  overlay is the strongest single proof that Phase A + B + C + D-1 +
+  D-2 link together for one firmware image.  Runtime is gated on a
+  configured upstream STA SSID and on lwIP NAPT.
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)
