@@ -263,6 +263,27 @@ Real 802.11 management/control frames are out of scope.
 - [x] Frame structure passes 4 source-analysis tests (cb storage,
       deliver helper, both netif taps).
 
+#### Day-48 — `esp_wifi_80211_tx` implemented
+
+- [x] `esp_wifi_promisc.c::esp_wifi_80211_tx` no longer returns
+      `ESP_ERR_NOT_SUPPORTED`.  Implements: (1) per-type filter-mask
+      loopback to `s_promisc_rx_cb` (MGMT / CTRL / DATA / MISC), with
+      `WIFI_PKT_*` type tag derived from the FC byte; (2) DATA-frame
+      LLC/SNAP de-encapsulation back to Ethernet and injection onto the
+      virtual wire via a new `qemu_wifi_tx_raw_no_promisc()` helper,
+      which avoids double-tapping the sniffer (the raw frame is the
+      authoritative representation, the fabricated Ethernet wrap would
+      duplicate it).
+- [x] Address-field decode honors ToDS / FromDS combinations
+      (STA→AP, AP→STA); IBSS / WDS get the loopback only.
+- [x] `en_sys_seq` honored: when true, SEQ field is forced to 0 in the
+      delivered pkt (we have no real sequence counter).
+- [x] Two new source-analysis tests in `test_qemu_wifi_sta.py`:
+      `test_phase_e_80211_tx_implemented` (asserts no `ESP_ERR_NOT_SUPPORTED`,
+      per-type mask switch, raw-frame loopback, no-promisc TX use),
+      `test_phase_e_no_promisc_tx_helper` (validates the new MMIO-only
+      helper does not re-tap the sniffer).
+
 #### Remaining
 
 - [x] **Day 48 — tooling unblocked**: `tools/build-stock-sample.sh`
@@ -374,5 +395,5 @@ Source: `git grep -nE "return ESP_OK|s_fake_ap|stub" components/esp_wifi_qemu/`
 | `esp_wifi_ap.c` | `esp_wifi_ap_get_sta_aid` | NOT_FOUND | D |
 | `esp_wifi_ap.c` | `esp_wifi_deauth_sta` | no-op | D |
 | `esp_wifi_promisc.c` | `esp_wifi_set_promiscuous` (+ filter/cb/etc.) | no callback | E |
-| `esp_wifi_promisc.c` | `esp_wifi_80211_tx` | NOT_SUPPORTED | E (low) |
+| `esp_wifi_promisc.c` | `esp_wifi_80211_tx` | implemented (loopback + DATA→Eth) | E ✅ |
 | `esp_wifi_promisc.c` | `esp_wifi_set_vendor_ie*` | no-op | accepted (no real beacon) |

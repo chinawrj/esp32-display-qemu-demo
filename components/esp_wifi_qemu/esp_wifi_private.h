@@ -24,6 +24,12 @@
  * is in use (e.g. protocol_examples_common based samples). */
 int qemu_wifi_tx_raw(const void *buffer, uint16_t len);
 
+/* Day-48 Phase-E: TX an arbitrary buffer (Ethernet OR raw 802.11) onto
+ * the QEMU virtual wire WITHOUT tapping the promiscuous callback.  Used
+ * by esp_wifi_80211_tx() which has already delivered the original raw
+ * frame to the callback and must not double-fabricate an Ethernet wrap. */
+int qemu_wifi_tx_raw_no_promisc(const void *buffer, uint16_t len);
+
 /* SoftAP fake-station table (esp_wifi_ap.c).
  * Day-45: AP/APSTA start fabricates N synthetic stations and posts
  * WIFI_EVENT_AP_STACONNECTED for each, so stock softAP samples see

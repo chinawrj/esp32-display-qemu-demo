@@ -803,6 +803,82 @@ class TestSourceFiles:
         tx_body = src[tx_idx:tx_idx + 600]
         assert "qemu_promisc_deliver_eth(buffer, len, true)" in tx_body
 
+    def test_phase_e_80211_tx_implemented(self):
+        """Phase-E (Day 48): esp_wifi_80211_tx is no longer NOT_SUPPORTED.
+
+        It must (1) loop the raw 802.11 frame back to the local promiscuous
+        callback when filter masks accept it, with per-type mask handling
+        (MGMT / CTRL / DATA / MISC), and (2) decode DATA frames carrying a
+        valid LLC/SNAP shim into Ethernet and inject them onto the wire via
+        a no-promisc TX helper to avoid double-tapping.
+        """
+        promisc = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_promisc.c"
+        src = promisc.read_text()
+        # Find the function body.
+        start = src.find("esp_err_t esp_wifi_80211_tx(")
+        assert start != -1, "esp_wifi_80211_tx symbol missing"
+        # Take a generous slice covering the whole function.
+        body = src[start:start + 6000]
+
+        # Must NOT short-circuit to ESP_ERR_NOT_SUPPORTED any more.
+        assert "ESP_ERR_NOT_SUPPORTED" not in body, (
+            "esp_wifi_80211_tx still returns ESP_ERR_NOT_SUPPORTED"
+        )
+
+        # Argument validation must reject bad ifx / NULL buffer / bad length.
+        assert "WIFI_IF_MAX" in body
+        assert "len < 24" in body or "len < 24 ||" in body
+
+        # Per-type filter mask switch.
+        for token in (
+            "WIFI_PROMIS_FILTER_MASK_MGMT",
+            "WIFI_PROMIS_FILTER_MASK_CTRL",
+            "WIFI_PROMIS_FILTER_MASK_DATA",
+            "WIFI_PKT_MGMT",
+            "WIFI_PKT_CTRL",
+            "WIFI_PKT_DATA",
+        ):
+            assert token in body, f"80211_tx missing per-type handling for {token}"
+
+        # Loopback to the registered cb (the *raw* frame, not a fabricated wrap).
+        assert "s_promisc_rx_cb(pkt," in body, (
+            "80211_tx must deliver the raw frame to the registered cb"
+        )
+
+        # DATA-frame Ethernet projection must use the no-promisc TX helper to
+        # avoid double-tapping the sniffer.
+        assert "qemu_wifi_tx_raw_no_promisc(" in body, (
+            "DATA-frame projection must use qemu_wifi_tx_raw_no_promisc"
+        )
+        # And the LLC/SNAP shim is recognized before projecting.
+        assert "0xAA" in body and "0x03" in body
+
+        # Address-field decode honors ToDS / FromDS bits.
+        assert "WIFI_FC1_TODS" in body or "to_ds" in body
+        assert "WIFI_FC1_FROMDS" in body or "from_ds" in body
+
+    def test_phase_e_no_promisc_tx_helper(self):
+        """Phase-E (Day 48): qemu_wifi_tx_raw_no_promisc exists in the netif
+        layer, performs the MMIO TX, and does NOT call qemu_promisc_deliver_eth.
+        """
+        netif = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_netif.c"
+        src = netif.read_text()
+        start = src.find("int qemu_wifi_tx_raw_no_promisc(")
+        assert start != -1, "qemu_wifi_tx_raw_no_promisc missing"
+        # Find the next function definition to bound the body.
+        end = src.find("\n}\n", start)
+        assert end != -1
+        body = src[start:end]
+        assert "WIFI_REG_TX_ADDR" in body and "WIFI_REG_TX_LEN" in body, (
+            "no-promisc TX helper must drive the QEMU DMA registers"
+        )
+        assert "qemu_promisc_deliver_eth" not in body, (
+            "no-promisc TX helper must not tap the promiscuous cb"
+        )
+        # And the prototype is exposed in the private header.
+        priv = (PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_private.h").read_text()
+        assert "qemu_wifi_tx_raw_no_promisc" in priv
+
     def test_build_stock_sample_handles_custom_partitions_and_priv_requires(self, tmp_path):
         """Phase-E tooling: build-stock-sample.sh must
            (a) symlink any partitions*.csv from sample root into the wrapper

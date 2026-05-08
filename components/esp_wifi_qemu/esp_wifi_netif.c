@@ -130,6 +130,28 @@ int qemu_wifi_tx_raw(const void *buffer, uint16_t len)
 }
 
 /**
+ * @brief MMIO-only TX (no promiscuous tap).
+ *
+ * Day-48 Phase-E: esp_wifi_80211_tx() has already delivered the raw
+ * 802.11 frame to the local promiscuous callback (which is the correct
+ * representation, since 80211_tx is by definition an air-side frame).
+ * Routing the decoded Ethernet payload through qemu_wifi_tx_raw() would
+ * cause qemu_promisc_deliver_eth() to fabricate a *second* 802.11 wrap
+ * around the same payload — a sniffer would log every 80211_tx twice.
+ * This helper sends the buffer over the QEMU DMA wire without that tap.
+ */
+int qemu_wifi_tx_raw_no_promisc(const void *buffer, uint16_t len)
+{
+    if (!buffer || len == 0 || len > WIFI_PKT_BUF_SIZE) {
+        return -1;
+    }
+    memcpy(s_tx_buf, buffer, len);
+    wifi_qemu_write(WIFI_REG_TX_ADDR, (uint32_t)(uintptr_t)s_tx_buf);
+    wifi_qemu_write(WIFI_REG_TX_LEN,  (uint32_t)len);
+    return 0;
+}
+
+/**
  * @brief Replace the default Wi-Fi driver on the STA netif with our DMA driver.
  *
  * Must be called AFTER esp_netif_create_default_wifi_sta() and AFTER the
