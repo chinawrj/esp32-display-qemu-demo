@@ -317,13 +317,19 @@ them and the user asks. Each is its own future workday.
 
 ## Cross-cutting non-API work
 
-### CC-1 — Stub audit test (Day 42 quick-win)
+### CC-1 — Stub audit test (Day 42 quick-win) ✅ DONE (Day 48)
 
-Add `tests/test_no_hardcoded_ap_info.py` (source-analysis): grep the
-component for `s_fake_ap`, `-50` constant, `0xAA, 0xBB, 0xCC`,
-`"QEMU_TEST"` outside test fixtures and `mock_wpa_supplicant.py`. Fail
-the test until Phase A lands. Acts as a regression gate so future
-edits can't accidentally re-introduce hardcoded fakes.
+`tests/test_no_hardcoded_ap_info.py` greps the `esp_wifi_qemu`
+component for the four Phase-A regression tokens (`s_fake_ap`,
+`"QEMU_TEST"`, the `-50` RSSI constant, and the
+`{0xAA,0xBB,0xCC,0xDD,0xEE,0xFF}` BSSID byte sequence) plus a
+non-vacuity check that asserts the four Phase-A connection MMIO regs
+are still actually read by `esp_wifi_extras.c`. Comments and string
+literals are filtered separately so legitimate documentation can
+still mention the historical behaviour.  An `ALLOWLIST` dict gives
+future code an escape hatch with mandatory justification.  Verified
+both directions: 6 tests pass on the current tree, all four token
+checks fire on synthetic relapse input.
 
 ### CC-2 — Skill follow-up
 
