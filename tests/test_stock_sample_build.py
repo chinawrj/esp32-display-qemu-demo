@@ -162,6 +162,25 @@ def test_basic_wifi_smoke_includes_softap_sta_build_only():
     assert "softap_sta|${IDF_PATH}/examples/wifi/softap_sta|softap|build_only" in script
 
 
+def test_basic_wifi_smoke_includes_roaming_app_build_only():
+    """Day-49: roaming_app exercises the IDF roaming library
+    (BSS-Transition-Management hooks, RSSI thresholds) on top of the
+    same Phase-A station surface as getting_started/station. Building
+    it drop-in proves our QEMU overlay does not break the roaming
+    subsystem's link expectations even when the firmware also pulls
+    in `WIFI_ROAMING_ENABLE` glue code. Runtime would need an
+    802.11k/v-capable AP cluster which neither the smoke gate nor a
+    single mock_wpa_supplicant can stand up.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    assert "examples/wifi/roaming/roaming_app" in script, (
+        "basic smoke gate missing roaming_app"
+    )
+    assert "roaming_app|" in script
+    assert ("roaming_app|${IDF_PATH}/examples/wifi/roaming/roaming_app|"
+            "station|build_only") in script
+
+
 def test_stock_sample_release_doc_exists():
     doc = DOCS_DIR / "qemu-wifi-stock-samples.md"
     assert doc.exists(), "stock Wi-Fi sample release guide is missing"

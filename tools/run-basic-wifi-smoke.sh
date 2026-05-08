@@ -56,6 +56,15 @@ SAMPLES=(
     # upstream STA SSID and on lwIP NAPT, neither of which the smoke
     # gate provisions.
     "softap_sta|${IDF_PATH}/examples/wifi/softap_sta|softap|build_only"
+    # Day-49: roaming_app exercises the same Phase A surface as
+    # getting_started/station but on top of the IDF roaming library
+    # (esp_wifi_set_rssi_threshold, BSS Transition Management hooks),
+    # which our shim provides as link-clean stubs. Build success here
+    # is the cheapest proof that station-mode firmware can pull in the
+    # roaming subsystem without unresolved symbols. Runtime would need
+    # an 802.11k/v-capable AP cluster which neither the smoke gate nor
+    # any single mock_wpa_supplicant can stand up today.
+    "roaming_app|${IDF_PATH}/examples/wifi/roaming/roaming_app|station|build_only"
 )
 
 PASS=0

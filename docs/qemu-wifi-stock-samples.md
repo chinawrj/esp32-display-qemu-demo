@@ -30,6 +30,7 @@ Kconfig SSID / console UART input).
 | `examples/wifi/fast_scan/` | Phase A connection AP record + Phase B channel / authmode / cipher tracking |
 | `examples/wifi/power_save/` | Phase C `esp_wifi_set_ps` / `esp_wifi_get_ps` round-trip |
 | `examples/wifi/softap_sta/` | Phase A + B + C + D-1 + D-2 link together for an APSTA-mode binary (only stock sample that drives both `WIFI_MODE_AP` and `WIFI_MODE_STA` simultaneously) — Day 49 |
+| `examples/wifi/roaming/roaming_app/` | Phase A + IDF roaming-library glue (BSS Transition Management, RSSI threshold hooks) link clean on top of station mode — Day 49 |
 
 ## Prerequisites
 
