@@ -891,6 +891,27 @@ static void esp_wifi_handle_cmd(ESPWifiState *s, uint32_t cmd)
         break;
 
     case WIFI_CMD_SCAN:
+        /* Defensive guard against the firmware-side startup_scan racing
+         * with an app-issued esp_wifi_connect().  If a connect flow is
+         * already in progress (anything past the IDLE/NONE state, but
+         * before CONNECTED), dropping a redundant CMD_SCAN here prevents
+         * `scan_only=true` from hijacking the in-flight SCAN_RESULTS
+         * handling — which would otherwise short-circuit to SCAN_DONE
+         * and skip ADD_NETWORK / SELECT_NETWORK / GOT_IP.  The firmware
+         * shim takes care to issue the housekeeping SCAN before posting
+         * STA_START, but this guard makes the device robust against any
+         * other pattern (e.g. a sample that scans periodically while
+         * connected).
+         */
+        if (s->status == WIFI_STATE_STARTED &&
+            s->conn_state != WPA_CONN_NONE &&
+            s->conn_state != WPA_CONN_IDLE) {
+#if WIFI_DEBUG
+            info_report("[ESP WIFI] CMD_SCAN dropped (connect in flight, "
+                        "conn_state=%d)", s->conn_state);
+#endif
+            break;
+        }
         s->scan_only = true;
         if (s->ctrl_fd >= 0) {
             s->conn_state = WPA_CONN_SCAN_SENT;

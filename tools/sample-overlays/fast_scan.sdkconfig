@@ -1,0 +1,10 @@
+# Day-50: per-sample sdkconfig overlay merged on top of the QEMU Wi-Fi
+# defaults by tools/build-stock-sample.sh (via EXTRA_SDKCONFIG_DEFAULTS).
+#
+# Stock examples/wifi/fast_scan defaults its target SSID to "myssid", which
+# the mock_wpa_supplicant does not advertise. Pointing the example at
+# "QEMU_TEST" (the SSID fabricated by mock_wpa_supplicant.py) keeps the
+# zero-source-diff contract while letting the example reach IP_EVENT_STA_GOT_IP
+# in QEMU.
+CONFIG_EXAMPLE_WIFI_SSID="QEMU_TEST"
+CONFIG_EXAMPLE_WIFI_PASSWORD="qemu1234"

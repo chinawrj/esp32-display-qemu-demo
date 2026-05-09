@@ -15,6 +15,7 @@ defaults.
 | `examples/wifi/getting_started/station/` | `station` | `got ip:10.0.2.15` |
 | `examples/wifi/scan/` | `scan` | `Total APs scanned = 1` and `SSID QEMU_TEST` |
 | `examples/wifi/getting_started/softAP/` | `softap` | `wifi_init_softap finished` |
+| `examples/wifi/fast_scan/` | `station` | `got ip:10.0.2.15` (Day 50 — see below) |
 
 ### Build-only coverage (Day 48)
 
@@ -23,14 +24,49 @@ QEMU Wi-Fi shim implements a wide enough subset of `esp_wifi.h` for them to
 link with **zero source modification** (only `CMakeLists.txt` +
 `sdkconfig.defaults` differ).  Their runtime is not exercised by the gate
 because it depends on knobs the gate does not provision (sample-specific
-Kconfig SSID / console UART input).
+console UART input).
 
 | ESP-IDF sample | What it proves builds clean |
 |----------------|-----------------------------|
-| `examples/wifi/fast_scan/` | Phase A connection AP record + Phase B channel / authmode / cipher tracking |
 | `examples/wifi/power_save/` | Phase C `esp_wifi_set_ps` / `esp_wifi_get_ps` round-trip |
 | `examples/wifi/softap_sta/` | Phase A + B + C + D-1 + D-2 link together for an APSTA-mode binary (only stock sample that drives both `WIFI_MODE_AP` and `WIFI_MODE_STA` simultaneously) — Day 49 |
 | `examples/wifi/roaming/roaming_app/` | Phase A + IDF roaming-library glue (BSS Transition Management, RSSI threshold hooks) link clean on top of station mode — Day 49 |
+
+### Day 50 — `fast_scan` runtime promotion
+
+`examples/wifi/fast_scan/` was originally part of the Day-48 build-only set
+because (a) its default Kconfig SSID `myssid` does not match the AP fabricated
+by `tools/mock_wpa_supplicant.py` (which advertises `QEMU_TEST`), and (b) the
+sample's `WIFI_FAST_SCAN` method exposed a startup-scan-vs-`CMD_CONNECT`
+race in the firmware shim that the `getting_started/station` example
+happened to step around by virtue of slightly different task timing.
+
+Day 50 closes both blockers, so the gate now runs the sample end-to-end:
+
+1. **Firmware shim ordering** — `esp_wifi_start` now MMIO-writes the
+   housekeeping `CMD_SCAN` *before* posting `WIFI_EVENT_STA_START`.  The
+   event task runs at `tskIDLE_PRIORITY+2` and can preempt the caller as
+   soon as `esp_event_post` returns; previously the app's `STA_START`
+   handler could call `esp_wifi_connect()` (issuing `CMD_CONNECT`) on the
+   device before our own `CMD_SCAN` had been written, which left
+   `scan_only=true` on top of an in-flight connect flow.
+
+2. **Device-side defensive guard** — `WIFI_CMD_SCAN` is now dropped when
+   `s->status == WIFI_STATE_STARTED && s->conn_state` is anything other
+   than `WPA_CONN_NONE` / `WPA_CONN_IDLE`.  This makes the device robust
+   against any future caller pattern that issues `CMD_SCAN` while a
+   connect is in flight.
+
+3. **`EXTRA_SDKCONFIG_DEFAULTS` overlay channel** — the smoke gate now
+   accepts a 5th `SAMPLES` entry field that points at a per-sample
+   sdkconfig fragment.  `tools/sample-overlays/fast_scan.sdkconfig`
+   provisions `CONFIG_EXAMPLE_WIFI_SSID="QEMU_TEST"` /
+   `CONFIG_EXAMPLE_WIFI_PASSWORD="qemu1234"` so the example aims at the
+   mock supplicant's AP.  This stays inside the zero-source-diff
+   contract — only the sdkconfig channel is touched.
+
+The runtime evidence is the same as `getting_started/station`:
+`got ip:10.0.2.15` on the serial log within the smoke gate's duration.
 
 ## Prerequisites
 

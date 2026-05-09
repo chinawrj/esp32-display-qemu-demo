@@ -38,14 +38,25 @@ SAMPLES=(
     "station|${IDF_PATH}/examples/wifi/getting_started/station|station|run"
     "scan|${IDF_PATH}/examples/wifi/scan|scan|run"
     "softAP|${IDF_PATH}/examples/wifi/getting_started/softAP|softap|run"
+    # Day-50: fast_scan promoted from build-only to runtime.  The sample's
+    # WIFI_FAST_SCAN method races esp_wifi_connect() (called from the
+    # STA_START handler) against the firmware shim's housekeeping
+    # startup-scan; the resulting CMD_SCAN-after-CMD_CONNECT order used
+    # to leave scan_only=true on the device, short-circuiting
+    # SCAN_RESULTS to SCAN_DONE and skipping ADD_NETWORK / SELECT_NETWORK
+    # / GOT_IP.  Day-50 fixes both sides (post STA_START AFTER the
+    # MMIO write, plus a device-side guard that drops a redundant
+    # CMD_SCAN while a connect flow is in-flight).  The sample's
+    # default SSID ("myssid") is overridden via the sdkconfig overlay
+    # below to point at the mock supplicant's QEMU_TEST AP — the only
+    # change a stock sample needs is the sdkconfig channel, no source
+    # diff.
+    "fast_scan|${IDF_PATH}/examples/wifi/fast_scan|station|run|${PROJECT_DIR}/tools/sample-overlays/fast_scan.sdkconfig"
     # Day-48: build-only coverage for samples whose runtime depends on
-    # config knobs (fast_scan SSID Kconfig) or console UART (power_save
-    # get_ap_info_from_stdin) that the smoke gate does not provision.
-    # Build success here proves Phase A (real connection AP record),
-    # Phase B (channel / auth / cipher tracking) and Phase C
-    # (esp_wifi_set_ps round-trip) are wide enough for the stock
-    # esp_wifi.h surface these samples invoke.
-    "fast_scan|${IDF_PATH}/examples/wifi/fast_scan|station|build_only"
+    # console UART input that the smoke harness does not provision.
+    # Build success here proves Phase C (esp_wifi_set_ps round-trip)
+    # is wide enough for the stock esp_wifi.h surface these samples
+    # invoke.
     "power_save|${IDF_PATH}/examples/wifi/power_save|station|build_only"
     # Day-49: softap_sta is the only stock wifi sample that exercises
     # APSTA mode (STA + SoftAP simultaneously) in a single binary.
@@ -75,6 +86,7 @@ run_one() {
     local sample_dir="$2"
     local profile="$3"
     local mode="${4:-run}"           # run | build_only
+    local overlay="${5:-}"           # optional EXTRA_SDKCONFIG_DEFAULTS path
     local build_dir="${sample_dir}/build_qemu"
     local build_log="${LOG_DIR}/${name}-build.log"
     local run_log="${LOG_DIR}/${name}-run.log"
@@ -83,7 +95,8 @@ run_one() {
     local run_status="skipped"
 
     echo "[basic-wifi-smoke] === ${name}: build ==="
-    if bash "${PROJECT_DIR}/tools/build-stock-sample.sh" "$sample_dir" >"$build_log" 2>&1; then
+    if EXTRA_SDKCONFIG_DEFAULTS="$overlay" \
+        bash "${PROJECT_DIR}/tools/build-stock-sample.sh" "$sample_dir" >"$build_log" 2>&1; then
         echo "[basic-wifi-smoke] ${name}: build ok"
         build_status="ok"
     else
@@ -128,8 +141,8 @@ echo "[basic-wifi-smoke] SUMMARY_FILE=${SUMMARY_FILE}"
 echo "[basic-wifi-smoke] DURATION=${DURATION}"
 
 for entry in "${SAMPLES[@]}"; do
-    IFS='|' read -r name sample_dir profile mode <<<"$entry"
-    run_one "$name" "$sample_dir" "$profile" "${mode:-run}"
+    IFS='|' read -r name sample_dir profile mode overlay <<<"$entry"
+    run_one "$name" "$sample_dir" "$profile" "${mode:-run}" "${overlay:-}"
 done
 
 echo ""

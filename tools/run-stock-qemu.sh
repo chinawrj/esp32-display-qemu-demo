@@ -255,8 +255,12 @@ case "$VERIFY_PROFILE" in
     station|custom)
         check "STA started"      "WIFI_EVENT_STA_START|wifi.*start|sta_start"
         # STA connected check is optional; skip with SKIP_CONNECTED=1.
+        # Also accept "got ip:" — it implies connection succeeded and is
+        # the only connect-evidence stock samples like wifi/fast_scan emit
+        # (fast_scan's app handler logs "got ip:" but never an explicit
+        # "connected" line).
         if [ "${SKIP_CONNECTED:-0}" != "1" ]; then
-            check "STA connected" "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap"
+            check "STA connected" "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap|got ip:[0-9]"
         fi
         check "Expected log"     "$EXPECT_PAT"
         ;;
@@ -270,7 +274,7 @@ case "$VERIFY_PROFILE" in
     tcp_client|udp_client)
         check "STA started"      "WIFI_EVENT_STA_START|wifi.*start|sta_start"
         if [ "${SKIP_CONNECTED:-0}" != "1" ]; then
-            check "STA connected" "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap"
+            check "STA connected" "CONNECTED|sta_connected|WIFI_EVENT_STA_CONNECTED|connected to ap|got ip:[0-9]"
         fi
         check "Expected log"     "$EXPECT_PAT"
         ;;

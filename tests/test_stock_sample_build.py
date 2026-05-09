@@ -122,19 +122,23 @@ def test_basic_wifi_smoke_records_run_failures():
 
 
 def test_basic_wifi_smoke_includes_phase_abc_build_only_samples():
-    """Day-48: fast_scan and power_save extend the release gate as
-    build-only samples.  Their successful build proves Phase A (real
-    connection AP record), Phase B (channel/auth/cipher) and Phase C
-    (esp_wifi_set_ps round-trip) are wide enough for the stock
-    esp_wifi.h surface, even though their runtime depends on
-    config knobs (Kconfig SSID, console UART) that the smoke gate
-    does not provision.
+    """Day-48: power_save extends the release gate as a build-only sample.
+    Successful build proves Phase C (esp_wifi_set_ps round-trip) is wide
+    enough for the stock esp_wifi.h surface, even though runtime depends
+    on console UART input that the smoke gate does not provision.
+
+    Day-50: fast_scan was promoted out of build-only to a runtime entry
+    once the startup-scan-vs-CMD_CONNECT race in the firmware shim was
+    fixed and the sample's SSID/password were wired through the
+    EXTRA_SDKCONFIG_DEFAULTS overlay channel.  See
+    `test_basic_wifi_smoke_promotes_fast_scan_to_runtime` for that gate.
     """
     script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
-    for sample in ("examples/wifi/fast_scan", "examples/wifi/power_save"):
-        assert sample in script, f"basic smoke gate missing {sample}"
+    assert "examples/wifi/power_save" in script, (
+        "basic smoke gate missing power_save"
+    )
     # The 4-field SAMPLES entry format must include the build_only marker.
-    assert "fast_scan|" in script and "|build_only" in script
+    assert "|build_only" in script
     assert "power_save|" in script
     # And run_one must support the build_only mode.
     assert 'mode="${4:-run}"' in script
@@ -142,6 +146,58 @@ def test_basic_wifi_smoke_includes_phase_abc_build_only_samples():
     # build_only samples are still counted as PASS (gate is green when
     # build succeeds, even though run is skipped).
     assert 'run_status="build_only"' in script
+
+
+def test_basic_wifi_smoke_promotes_fast_scan_to_runtime():
+    """Day-50: fast_scan promoted from build-only to runtime.  This
+    requires three things to be in place:
+
+    1. The firmware-shim startup-scan must be MMIO-written BEFORE the
+       STA_START event is posted, so the app's STA_START handler (which
+       calls esp_wifi_connect()) cannot land CMD_CONNECT on the device
+       before the housekeeping CMD_SCAN.
+
+    2. The device-side WIFI_CMD_SCAN handler must defensively drop a
+       redundant scan whenever a connect flow is already in-flight, so
+       no future race can re-assert scan_only=true on top of an active
+       ADD_NETWORK / SELECT_NETWORK chain.
+
+    3. The smoke gate must merge the sample's SSID/password into the
+       sdkconfig channel via the EXTRA_SDKCONFIG_DEFAULTS overlay (the
+       only allowed deviation from byte-identical-source).
+
+    All three are asserted here as a single regression gate.
+    """
+    # 1. Firmware shim ordering.
+    shim = (PROJECT_ROOT / "components" / "esp_wifi_qemu" /
+            "esp_wifi_shim.c").read_text()
+    assert "wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_SCAN);\n            ESP_LOGI(TAG, \"startup scan initiated\");\n            esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START," in shim, (
+        "esp_wifi_start must MMIO-write CMD_SCAN before posting STA_START"
+    )
+
+    # 2. Device-side defensive guard.
+    device = (PROJECT_ROOT / "tools" / "qemu-src-patches" / "hw" / "net" /
+              "esp_wifi.c").read_text()
+    assert "CMD_SCAN dropped" in device or (
+        "s->status == WIFI_STATE_STARTED &&" in device
+        and "s->conn_state != WPA_CONN_NONE &&" in device
+        and "s->conn_state != WPA_CONN_IDLE" in device
+    ), "device CMD_SCAN handler must drop a redundant scan when conn_state is not IDLE/NONE"
+
+    # 3. Smoke gate runtime entry + overlay wiring.
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    assert ("fast_scan|${IDF_PATH}/examples/wifi/fast_scan|station|run|"
+            "${PROJECT_DIR}/tools/sample-overlays/fast_scan.sdkconfig"
+            ) in script, "fast_scan must be a runtime entry with overlay"
+    # run_one must accept the 5th overlay field and forward it.
+    assert 'overlay="${5:-}"' in script
+    assert 'EXTRA_SDKCONFIG_DEFAULTS="$overlay"' in script
+    # The overlay file must exist and provision the QEMU_TEST SSID.
+    overlay = TOOLS_DIR / "sample-overlays" / "fast_scan.sdkconfig"
+    assert overlay.exists(), "fast_scan sdkconfig overlay missing"
+    overlay_text = overlay.read_text()
+    assert 'CONFIG_EXAMPLE_WIFI_SSID="QEMU_TEST"' in overlay_text
+    assert 'CONFIG_EXAMPLE_WIFI_PASSWORD=' in overlay_text
 
 
 def test_basic_wifi_smoke_includes_softap_sta_build_only():

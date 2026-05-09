@@ -293,15 +293,29 @@ esp_err_t esp_wifi_start(void)
                 xTaskCreate(wifi_event_task, "wifi_evt", 4096, NULL,
                             tskIDLE_PRIORITY + 2, &s_evt_task);
             }
-            esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START, NULL, 0, portMAX_DELAY);
             /* Issue a background scan right at startup so AP list is already
              * populated when the app's WIFI_EVENT_STA_START handler fires
              * or when esp_wifi_connect() is called.  The event task picks up
              * WIFI_EVT_SCAN_DONE and posts WIFI_EVENT_SCAN_DONE with the
              * result count.  A subsequent esp_wifi_scan_start() call works
-             * normally and overwrites these results. */
+             * normally and overwrites these results.
+             *
+             * IMPORTANT: write the CMD_SCAN MMIO BEFORE posting STA_START.
+             * The event task runs at tskIDLE_PRIORITY+2 and can preempt this
+             * task as soon as the post returns; if the app's STA_START
+             * handler then synchronously calls esp_wifi_connect(), the
+             * resulting CMD_CONNECT can land on the device before our
+             * housekeeping CMD_SCAN.  In that order CMD_SCAN re-asserts
+             * `scan_only=true` on top of an in-flight connect flow,
+             * causing the device's SCAN_RESULTS handler to short-circuit
+             * to SCAN_DONE and skip ADD_NETWORK / SELECT_NETWORK / GOT_IP.
+             * Stock samples wifi/fast_scan and wifi/getting_started/station
+             * both follow the "connect from STA_START" pattern, so this
+             * ordering guarantee is required for drop-in compatibility.
+             */
             wifi_qemu_write(WIFI_REG_CMD, WIFI_CMD_SCAN);
             ESP_LOGI(TAG, "startup scan initiated");
+            esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_START, NULL, 0, portMAX_DELAY);
         } else {
             ESP_LOGW(TAG, "esp_wifi_start STA: %s (0x%x) — continuing in QEMU",
                      esp_err_to_name(ret), ret);

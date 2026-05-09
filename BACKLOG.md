@@ -35,11 +35,16 @@ A given sample is "supported" when:
 - TCP/UDP socket data plane via `wifi_packet_relay.py`.
 - Stock samples that build & runtime-pass:
   `wifi/getting_started/station`, `wifi/scan`, `wifi/getting_started/softAP`,
-  `protocols/sockets/tcp_client`, `protocols/sockets/udp_client`.
+  `protocols/sockets/tcp_client`, `protocols/sockets/udp_client`,
+  `wifi/fast_scan` (Day 50 — promoted from build-only after fixing the
+  startup-scan-vs-`CMD_CONNECT` race in `esp_wifi_start` and adding a
+  device-side guard against re-asserting `scan_only=true` on top of an
+  in-flight connect; the sample's SSID/password are merged via the new
+  `tools/sample-overlays/fast_scan.sdkconfig` overlay through the
+  `EXTRA_SDKCONFIG_DEFAULTS` channel).
 - Stock samples that **build clean** with zero source diff (build-only
   coverage in the release smoke gate, Day 48):
-  `wifi/fast_scan` (exercises Phase A connection AP record + Phase B
-  channel/auth/cipher), `wifi/power_save` (exercises Phase C
+  `wifi/power_save` (exercises Phase C
   `esp_wifi_set_ps` round-trip).  Runtime is gated on Kconfig SSID /
   console UART input that the smoke harness does not provision.
 - Day 49 — `wifi/softap_sta` joins the build-only set: it is the only
