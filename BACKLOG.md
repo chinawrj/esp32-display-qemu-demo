@@ -41,12 +41,18 @@ A given sample is "supported" when:
   device-side guard against re-asserting `scan_only=true` on top of an
   in-flight connect; the sample's SSID/password are merged via the new
   `tools/sample-overlays/fast_scan.sdkconfig` overlay through the
-  `EXTRA_SDKCONFIG_DEFAULTS` channel).
+  `EXTRA_SDKCONFIG_DEFAULTS` channel),
+  `wifi/power_save` (Day 51 — promoted from build-only by (a) fixing
+  the shim's `esp_wifi_set_inactive_time` to use the per-interface
+  IDF spec — STA min 3s, AP min 10s — instead of a blanket 10s reject
+  that broke the sample's `BEACON_TIMEOUT` default of 6s, and
+  (b) overriding `CONFIG_PM_ENABLE`/`CONFIG_FREERTOS_USE_TICKLESS_IDLE`
+  in the sample's `tools/sample-overlays/power_save.sdkconfig`
+  overlay since QEMU does not model the RTC peripheral registers
+  the ESP32 light-sleep path reads.  Source diff still zero —
+  the overlay is sdkconfig-only).
 - Stock samples that **build clean** with zero source diff (build-only
-  coverage in the release smoke gate, Day 48):
-  `wifi/power_save` (exercises Phase C
-  `esp_wifi_set_ps` round-trip).  Runtime is gated on Kconfig SSID /
-  console UART input that the smoke harness does not provision.
+  coverage in the release smoke gate):
 - Day 49 — `wifi/softap_sta` joins the build-only set: it is the only
   stock sample that runs APSTA mode, so building it against the QEMU
   overlay is the strongest single proof that Phase A + B + C + D-1 +

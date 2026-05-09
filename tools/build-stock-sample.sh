@@ -104,6 +104,28 @@ WRAP_DIR="${BUILD_DIR}/../_qemu_wrap_$(basename "${SAMPLE_DIR}")"
 WRAP_MAIN_DIR="${WRAP_DIR}/main"
 mkdir -p "${WRAP_MAIN_DIR}"
 
+# Day-51: invalidate the wrapper's persisted sdkconfig whenever the
+# resolved SDKCONFIG_DEFAULTS chain changes (sample defaults, QEMU
+# overlay, or caller-supplied EXTRA_SDKCONFIG_DEFAULTS).  ESP-IDF only
+# consults SDKCONFIG_DEFAULTS to seed `sdkconfig` the first time; once
+# the file exists, subsequent builds keep the previously-saved values
+# even if a new overlay would have flipped them.  This caused power_save
+# to ignore CONFIG_PM_ENABLE=n in its overlay on rebuild.  We hash the
+# defaults chain and store it next to the wrapper's sdkconfig; if the
+# hash changes we wipe sdkconfig (and the build dir) so the next idf.py
+# reconfigure picks up the new chain.
+SDKCONFIG_HASH=$(printf '%s' "${SDKCONFIG_DEFAULTS}" | sha1sum | awk '{print $1}')
+HASH_FILE="${WRAP_DIR}/.sdkconfig_defaults.sha1"
+if [ -f "${WRAP_DIR}/sdkconfig" ]; then
+    PREV_HASH="$(cat "${HASH_FILE}" 2>/dev/null || true)"
+    if [ "${PREV_HASH}" != "${SDKCONFIG_HASH}" ]; then
+        echo "[build-stock-sample] SDKCONFIG_DEFAULTS chain changed; wiping stale sdkconfig"
+        rm -f "${WRAP_DIR}/sdkconfig"
+        rm -rf "${BUILD_DIR}"
+    fi
+fi
+printf '%s\n' "${SDKCONFIG_HASH}" > "${HASH_FILE}"
+
 SAMPLE_MAIN_DIR="${SAMPLE_DIR}/main"
 if [ ! -d "$SAMPLE_MAIN_DIR" ]; then
     echo "Error: ${SAMPLE_DIR}/main directory not found" >&2

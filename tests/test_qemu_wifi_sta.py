@@ -645,15 +645,24 @@ class TestSourceFiles:
         assert "*mask = s_event_mask" in get_body
 
     def test_phase_c_inactive_time_per_interface_storage(self):
-        """Phase-C: inactive_time stored per interface; minimum 10s validation."""
+        """Phase-C: inactive_time stored per interface; per-interface
+        minimum validation (Day-51 fix: STA min is 3s per IDF docs,
+        SoftAP min is 10s)."""
         extras = PROJECT_ROOT / "components" / "esp_wifi_qemu" / "esp_wifi_extras.c"
         src = extras.read_text()
         assert "s_inactive_time[" in src, "per-iface inactive_time storage missing"
         set_idx = src.find("esp_wifi_set_inactive_time(wifi_interface_t ifx")
         assert set_idx != -1
-        body = src[set_idx:set_idx + 500]
-        assert "sec < 10" in body, (
-            "set_inactive_time must reject sub-10s values"
+        body = src[set_idx:set_idx + 800]
+        # Day-51: per-interface minimum (STA=3, AP=10), not a single
+        # blanket "< 10" check that would falsely reject the stock
+        # power_save sample's BEACON_TIMEOUT default of 6s.
+        assert "WIFI_IF_AP" in body and "10" in body and "3" in body, (
+            "set_inactive_time must enforce per-interface min "
+            "(STA>=3, AP>=10) per esp_wifi.h docs"
+        )
+        assert "sec < min_sec" in body, (
+            "set_inactive_time must compare against the per-iface min"
         )
         assert "s_inactive_time[ifx]" in body, (
             "set_inactive_time must store per-interface"

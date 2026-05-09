@@ -390,8 +390,13 @@ esp_err_t esp_wifi_set_inactive_time(wifi_interface_t ifx, uint16_t sec)
     if ((unsigned)ifx >= QEMU_WIFI_IF_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
-    /* IDF docs: STA-side allows 10..65535s; 0 means "keep current". */
-    if (sec != 0 && sec < 10) {
+    /* IDF docs (esp_wifi.h): For Station, ESP_ERR_INVALID_ARG if sec < 3.
+     * For SoftAP, ESP_ERR_INVALID_ARG if sec < 10.  Day-51 fix: previous
+     * code lumped both interfaces under the SoftAP rule and rejected
+     * any STA value below 10, which broke stock examples/wifi/power_save
+     * (CONFIG_EXAMPLE_WIFI_BEACON_TIMEOUT defaults to 6, range 6..30). */
+    const uint16_t min_sec = (ifx == WIFI_IF_AP) ? 10 : 3;
+    if (sec != 0 && sec < min_sec) {
         return ESP_ERR_INVALID_ARG;
     }
     if (sec != 0) {

@@ -121,31 +121,67 @@ def test_basic_wifi_smoke_records_run_failures():
     assert "run_status=\"ok\"" in content
 
 
-def test_basic_wifi_smoke_includes_phase_abc_build_only_samples():
-    """Day-48: power_save extends the release gate as a build-only sample.
-    Successful build proves Phase C (esp_wifi_set_ps round-trip) is wide
-    enough for the stock esp_wifi.h surface, even though runtime depends
-    on console UART input that the smoke gate does not provision.
+def test_basic_wifi_smoke_supports_build_only_mode():
+    """Day-48: the basic-wifi-smoke gate supports a `build_only` profile
+    for samples whose runtime depends on inputs the harness does not
+    provision (console UART, real upstream APs, etc.).  This test pins
+    the harness contract independent of which specific samples are
+    currently classified as build_only — sample-specific assertions
+    live in dedicated tests below.
 
-    Day-50: fast_scan was promoted out of build-only to a runtime entry
-    once the startup-scan-vs-CMD_CONNECT race in the firmware shim was
-    fixed and the sample's SSID/password were wired through the
-    EXTRA_SDKCONFIG_DEFAULTS overlay channel.  See
-    `test_basic_wifi_smoke_promotes_fast_scan_to_runtime` for that gate.
+    Day-50: fast_scan was promoted out of build-only to runtime once
+    the startup-scan-vs-CMD_CONNECT race was fixed and the sample's
+    SSID/password were wired through the EXTRA_SDKCONFIG_DEFAULTS
+    overlay channel.
+
+    Day-51: power_save was promoted out of build-only to runtime via
+    the same overlay playbook.  See
+    `test_basic_wifi_smoke_promotes_power_save_to_runtime`.
     """
     script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
-    assert "examples/wifi/power_save" in script, (
-        "basic smoke gate missing power_save"
-    )
-    # The 4-field SAMPLES entry format must include the build_only marker.
+    # The 4-field SAMPLES entry format must still include a build_only
+    # marker (used today by softap_sta and roaming_app).
     assert "|build_only" in script
-    assert "power_save|" in script
     # And run_one must support the build_only mode.
     assert 'mode="${4:-run}"' in script
     assert 'mode" = "build_only"' in script
     # build_only samples are still counted as PASS (gate is green when
     # build succeeds, even though run is skipped).
     assert 'run_status="build_only"' in script
+
+
+def test_basic_wifi_smoke_promotes_power_save_to_runtime():
+    """Day-51: power_save promoted from build-only (Day 48) to runtime,
+    mirroring the Day-50 fast_scan playbook.
+
+    The sample's runtime blocker was the Kconfig-default SSID
+    ("myssid"), which we now override via the EXTRA_SDKCONFIG_DEFAULTS
+    overlay channel to point at the mock supplicant's QEMU_TEST AP.
+    EXAMPLE_GET_AP_INFO_FROM_STDIN defaults to `n` (no console UART
+    input needed) and Phase C
+    (`esp_wifi_set_ps` + `esp_wifi_set_inactive_time` round-trip) is
+    already implemented end-to-end, so promotion is purely an overlay
+    + smoke-script change with **zero source diff** to the upstream
+    sample.  This regression gates all three of those facts.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    # 1. Smoke gate runtime entry + overlay wiring.
+    assert ("power_save|${IDF_PATH}/examples/wifi/power_save|station|run|"
+            "${PROJECT_DIR}/tools/sample-overlays/power_save.sdkconfig"
+            ) in script, "power_save must be a runtime entry with overlay"
+    # power_save must NOT also be in the build_only list.
+    assert "power_save|${IDF_PATH}/examples/wifi/power_save|station|build_only" not in script
+
+    # 2. run_one must accept the 5th overlay field and forward it.
+    assert 'overlay="${5:-}"' in script
+    assert 'EXTRA_SDKCONFIG_DEFAULTS="$overlay"' in script
+
+    # 3. The overlay file must exist and provision the QEMU_TEST SSID.
+    overlay = TOOLS_DIR / "sample-overlays" / "power_save.sdkconfig"
+    assert overlay.exists(), "power_save sdkconfig overlay missing"
+    overlay_text = overlay.read_text()
+    assert 'CONFIG_EXAMPLE_WIFI_SSID="QEMU_TEST"' in overlay_text
+    assert 'CONFIG_EXAMPLE_WIFI_PASSWORD=' in overlay_text
 
 
 def test_basic_wifi_smoke_promotes_fast_scan_to_runtime():

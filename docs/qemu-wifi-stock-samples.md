@@ -16,6 +16,7 @@ defaults.
 | `examples/wifi/scan/` | `scan` | `Total APs scanned = 1` and `SSID QEMU_TEST` |
 | `examples/wifi/getting_started/softAP/` | `softap` | `wifi_init_softap finished` |
 | `examples/wifi/fast_scan/` | `station` | `got ip:10.0.2.15` (Day 50 — see below) |
+| `examples/wifi/power_save/` | `station` | `got ip:10.0.2.15` (Day 51 — see below) |
 
 ### Build-only coverage (Day 48)
 
@@ -28,9 +29,52 @@ console UART input).
 
 | ESP-IDF sample | What it proves builds clean |
 |----------------|-----------------------------|
-| `examples/wifi/power_save/` | Phase C `esp_wifi_set_ps` / `esp_wifi_get_ps` round-trip |
 | `examples/wifi/softap_sta/` | Phase A + B + C + D-1 + D-2 link together for an APSTA-mode binary (only stock sample that drives both `WIFI_MODE_AP` and `WIFI_MODE_STA` simultaneously) — Day 49 |
 | `examples/wifi/roaming/roaming_app/` | Phase A + IDF roaming-library glue (BSS Transition Management, RSSI threshold hooks) link clean on top of station mode — Day 49 |
+
+### Day 51 — `power_save` runtime promotion
+
+`examples/wifi/power_save/` was originally part of the Day-48 build-only
+set because (a) its default Kconfig SSID `myssid` does not match the AP
+fabricated by `tools/mock_wpa_supplicant.py`, (b) the QEMU Wi-Fi shim's
+`esp_wifi_set_inactive_time` rejected any value below 10s — but the
+sample's `EXAMPLE_WIFI_BEACON_TIMEOUT` defaults to 6 (Kconfig range
+6..30), so `ESP_ERROR_CHECK(esp_wifi_set_inactive_time(WIFI_IF_STA, 6))`
+aborted on boot, and (c) the sample's `sdkconfig.defaults` enables
+`CONFIG_PM_ENABLE` + tickless idle + light sleep, which on QEMU trips a
+`LoadStorePIFAddrError` in `rtc_sleep_pd` because the RTC peripheral
+register space is not modelled.
+
+Day 51 closes all three blockers without modifying the sample's `.c`
+or `.h`:
+
+1. **Per-interface inactive-time minimum** — the IDF docs in
+   `esp_wifi.h` actually say `ESP_ERR_INVALID_ARG` when STA `sec < 3`
+   and AP `sec < 10`.  The shim previously enforced `sec < 10`
+   uniformly, which falsely rejected the sample's STA-side default of
+   6s.  `esp_wifi_set_inactive_time` now uses the spec'd
+   per-interface threshold.
+
+2. **Power management overlay** — `tools/sample-overlays/power_save.sdkconfig`
+   sets `CONFIG_PM_ENABLE=n` and `CONFIG_FREERTOS_USE_TICKLESS_IDLE=n`
+   so the firmware never calls into `esp_light_sleep_start`.  The
+   `esp_wifi_set_ps()` path itself (the API surface this sample is
+   meant to prove) still runs end-to-end.
+
+3. **SSID overlay** — same pattern as Day 50 fast_scan:
+   `CONFIG_EXAMPLE_WIFI_SSID="QEMU_TEST"` /
+   `CONFIG_EXAMPLE_WIFI_PASSWORD="qemu1234"` via the
+   `EXTRA_SDKCONFIG_DEFAULTS` channel.
+
+Day 51 also hardens `tools/build-stock-sample.sh` to invalidate the
+wrapper's persisted `sdkconfig` whenever the resolved
+`SDKCONFIG_DEFAULTS` chain changes (sha1 hash stored next to it),
+fixing a class of bugs where a new overlay file would be silently
+ignored on a rebuild because ESP-IDF only consults the defaults to
+seed an initial sdkconfig.
+
+The runtime evidence is `got ip:10.0.2.15` on the serial log within
+the smoke gate's duration.
 
 ### Day 50 — `fast_scan` runtime promotion
 

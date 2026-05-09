@@ -52,12 +52,18 @@ SAMPLES=(
     # change a stock sample needs is the sdkconfig channel, no source
     # diff.
     "fast_scan|${IDF_PATH}/examples/wifi/fast_scan|station|run|${PROJECT_DIR}/tools/sample-overlays/fast_scan.sdkconfig"
-    # Day-48: build-only coverage for samples whose runtime depends on
-    # console UART input that the smoke harness does not provision.
-    # Build success here proves Phase C (esp_wifi_set_ps round-trip)
-    # is wide enough for the stock esp_wifi.h surface these samples
-    # invoke.
-    "power_save|${IDF_PATH}/examples/wifi/power_save|station|build_only"
+    # Day-51: power_save promoted from build-only (Day 48) to runtime,
+    # mirroring the Day-50 fast_scan playbook.  The sample's only
+    # runtime blocker was the Kconfig-default SSID ("myssid"), which we
+    # now override via the EXTRA_SDKCONFIG_DEFAULTS overlay channel to
+    # point at the mock supplicant's QEMU_TEST AP.  EXAMPLE_GET_AP_INFO_
+    # FROM_STDIN defaults to `n` (no console input needed) and Phase C
+    # (esp_wifi_set_ps + esp_wifi_set_inactive_time round-trip) is
+    # already implemented, so this gives us end-to-end runtime proof
+    # that the Phase-C API surface is wide enough for the stock
+    # esp_wifi.h consumer.  Source diff is still zero — only this
+    # overlay file deviates from a real-hardware build.
+    "power_save|${IDF_PATH}/examples/wifi/power_save|station|run|${PROJECT_DIR}/tools/sample-overlays/power_save.sdkconfig"
     # Day-49: softap_sta is the only stock wifi sample that exercises
     # APSTA mode (STA + SoftAP simultaneously) in a single binary.
     # Build success proves Phase A (connection AP record) + Phase B

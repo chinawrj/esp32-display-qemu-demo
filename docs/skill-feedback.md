@@ -153,3 +153,27 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: The sample builds drop-in via `tools/build-stock-sample.sh` with **zero source diff** (binary 0x66dc0, 60% free). Runtime is gated on a real upstream STA SSID and on lwIP NAPT, which the smoke gate does not provision today, so the entry is `build_only`. Rationale for adding it even though we already have separate runtime coverage for getting_started/{station,softAP}: those each prove one mode at a time, leaving open the possibility of a regression where some Phase-A/B/C state symbol shadows a Phase-D AP table symbol (or vice versa) when the firmware imports both. softap_sta is the cheapest single-link probe for that class of regression.
 - **Workaround**: none.
 - **Priority**: medium
+
+### FB-020 (2026-05-09)
+- **Skill**: esp32-build-flash / tools/build-stock-sample.sh
+- **Category**: bug
+- **Summary**: ESP-IDF only consults `SDKCONFIG_DEFAULTS` to seed the *initial* `sdkconfig`; once the wrapper project's `sdkconfig` exists, later changes to overlay files (or to `EXTRA_SDKCONFIG_DEFAULTS`) are silently ignored on rebuild.
+- **Detail**: Day-51 promoted `wifi/power_save` to runtime via a new `tools/sample-overlays/power_save.sdkconfig` that flips `CONFIG_PM_ENABLE=n`. The first build after wiping `build_qemu/` honoured the overlay, but a later run that only wiped `build_qemu/` (and not `_qemu_wrap_power_save/`) kept the prior `CONFIG_PM_ENABLE=y` and the sample crashed in `esp_light_sleep_start` again. Symptom is silent: build succeeds, runtime fails with the pre-overlay behaviour. Manually deleting `_qemu_wrap_<sample>/` fixes it. Generalises to any overlay change for any sample.
+- **Workaround**: Day-51 fix in `tools/build-stock-sample.sh` — sha1-hash the resolved `SDKCONFIG_DEFAULTS` chain, store it next to the wrapper's `sdkconfig` as `.sdkconfig_defaults.sha1`, and on every invocation wipe `sdkconfig` + `build_qemu/` whenever the hash changes. Subsequent `idf.py reconfigure` then picks up the new chain.
+- **Priority**: high
+
+### FB-021 (2026-05-09)
+- **Skill**: project-scaffolding / esp_wifi_qemu shim
+- **Category**: bug
+- **Summary**: `esp_wifi_set_inactive_time` previously rejected any `sec < 10` for **all** interfaces, but `esp_wifi.h` only requires `sec >= 10` for AP (`WIFI_IF_AP`); for STA the threshold is `sec >= 3`. The wrong threshold caused stock `wifi/power_save` to abort on boot (`CONFIG_EXAMPLE_WIFI_BEACON_TIMEOUT` defaults to 6s, Kconfig range 6..30).
+- **Detail**: When porting an ESP-IDF API into the QEMU shim, **always read the official validation rules in `esp_wifi.h` carefully** — uniform thresholds across interfaces are a code smell and frequently violate the spec. Day-51 fix: read the per-interface min from a local `(ifx == WIFI_IF_AP) ? 10 : 3` ternary and only reject below that. Source-analysis test in `tests/test_qemu_wifi_sta.py::test_phase_c_inactive_time_per_interface_storage` now asserts the per-interface min is enforced.
+- **Workaround**: documented in source comments above `esp_wifi_set_inactive_time`.
+- **Priority**: medium
+
+### FB-022 (2026-05-09)
+- **Skill**: project-scaffolding / esp_wifi_qemu coverage
+- **Category**: missing-feature
+- **Summary**: QEMU does not model the ESP32 RTC / DPORT registers needed by `esp_light_sleep_start` → `rtc_sleep_pd` → `rtc_sleep_init`. Any stock sample that enables `CONFIG_PM_ENABLE` + `CONFIG_FREERTOS_USE_TICKLESS_IDLE` will trip a `LoadStorePIFAddrError` in the idle task as soon as `vApplicationSleep` lands.
+- **Detail**: Day-51 found this while promoting `wifi/power_save` (whose `sdkconfig.defaults` enables PM + tickless idle + light sleep) to runtime in the smoke gate. Workaround for now is to disable PM in the per-sample sdkconfig overlay — this preserves zero source diff because the overlay channel is allowed by the policy, and the `esp_wifi_set_ps()` API (the Wi-Fi-side knob the sample is actually meant to demonstrate) still exercises end-to-end. Long-term, modelling the ESP32 RTC peripheral well enough for `rtc_sleep_pd` to no-op (or stub `esp_light_sleep_start` directly) would let any stock light-sleep sample run unmodified. Track as a Phase-F item if a stock sample explicitly needs it.
+- **Workaround**: per-sample `CONFIG_PM_ENABLE=n` + `CONFIG_FREERTOS_USE_TICKLESS_IDLE=n` overlay.
+- **Priority**: low

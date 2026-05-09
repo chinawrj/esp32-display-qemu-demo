@@ -1,0 +1,30 @@
+# Day-51: per-sample sdkconfig overlay merged on top of the QEMU Wi-Fi
+# defaults by tools/build-stock-sample.sh (via EXTRA_SDKCONFIG_DEFAULTS).
+#
+# Stock examples/wifi/power_save defaults its target SSID to "myssid",
+# which the mock_wpa_supplicant does not advertise.  Pointing the
+# example at "QEMU_TEST" (the SSID fabricated by mock_wpa_supplicant.py)
+# keeps the zero-source-diff contract while letting the example reach
+# IP_EVENT_STA_GOT_IP in QEMU.  The .c / .h files of the sample are
+# byte-identical to upstream — only this overlay file differs from a
+# real-hardware build.
+#
+# This is the Day-51 promotion of power_save from build-only (Day 48)
+# to runtime, mirroring the Day-50 fast_scan playbook.  It exercises
+# the Phase-C esp_wifi_set_ps + esp_wifi_set_inactive_time round-trip
+# end-to-end against a live wpa_supplicant connect flow.
+CONFIG_EXAMPLE_WIFI_SSID="QEMU_TEST"
+CONFIG_EXAMPLE_WIFI_PASSWORD="qemu1234"
+
+# QEMU does not model the RTC/DPORT peripheral registers required by
+# the ESP32 power management driver's light-sleep path.  The sample's
+# sdkconfig.defaults enables CONFIG_PM_ENABLE + tickless idle + light
+# sleep, which on the real chip uses esp_pm to lower CPU freq and
+# enter light sleep after `main_task` returns.  In QEMU, the first
+# light-sleep entry trips a LoadStorePIFAddrError on a peripheral
+# register read.  Disabling PM in the overlay keeps the sample's
+# `esp_wifi_set_ps()` exercise (which is the API surface this stock
+# example proves) without depending on the chip-PM peripheral model
+# we don't have.  Source diff to the sample's .c / .h is still zero.
+CONFIG_PM_ENABLE=n
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=n
