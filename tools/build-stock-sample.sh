@@ -100,7 +100,7 @@ echo "════════════════════════�
 # modified — only the generated wrapper CMakeLists files change.
 # ---------------------------------------------------------------------------
 
-WRAP_DIR="${BUILD_DIR}/../_qemu_wrap_$(basename "${SAMPLE_DIR}")"
+WRAP_DIR="$(dirname "${BUILD_DIR}")/_qemu_wrap_$(basename "${SAMPLE_DIR}")"
 WRAP_MAIN_DIR="${WRAP_DIR}/main"
 mkdir -p "${WRAP_MAIN_DIR}"
 

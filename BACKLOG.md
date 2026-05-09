@@ -58,6 +58,28 @@ A given sample is "supported" when:
   overlay is the strongest single proof that Phase A + B + C + D-1 +
   D-2 link together for one firmware image.  Runtime is gated on a
   configured upstream STA SSID and on lwIP NAPT.
+- Day 52 — wide build-only sweep adds six more stock samples that
+  already link clean against the QEMU shim: `wifi/wps`,
+  `wifi/smart_config`, `wifi/ftm`, `wifi/espnow`,
+  `wifi/wps_softap_registrar`, and `wifi/itwt` (the last needed two
+  new ESP_ERR_NOT_SUPPORTED stubs `esp_wifi_sta_itwt_setup` /
+  `esp_wifi_sta_twt_config` since the esp32 target we emulate is
+  non-HE).  Build coverage is the cheapest unambiguous regression
+  gate against silent shim public-symbol drops; runtime promotion
+  for each of these will need its own protocol-level mock
+  (WPS-PBC exchange, ESPTOUCH air interface, FTM 11mc, ESP-NOW peer
+  table, WPS Registrar role, HE/iTWT-capable AP) which is multi-day
+  work each.  Day 52 also fixed `tools/build-stock-sample.sh` so
+  `WRAP_DIR` is computed via `dirname` rather than the
+  `${BUILD_DIR}/..` path component (which broke after the Day-51
+  hash invalidator wiped `BUILD_DIR/`).
+- Two stock Wi-Fi samples remain unbuilt: `wifi/wifi_eap_fast` and
+  `wifi/wifi_enterprise`, both blocked by an `EMBED_TXTFILES
+  ca.pem ...` clause in their `main/CMakeLists.txt` whose paths the
+  build-stock-sample.sh wrapper generator does not yet propagate
+  through the synthetic `main/` directory.  Cheapest follow-up:
+  teach the wrapper script to symlink any files referenced by
+  `EMBED_FILES` / `EMBED_TXTFILES` into the wrap dir.
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

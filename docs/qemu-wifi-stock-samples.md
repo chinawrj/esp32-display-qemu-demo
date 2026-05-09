@@ -31,6 +31,39 @@ console UART input).
 |----------------|-----------------------------|
 | `examples/wifi/softap_sta/` | Phase A + B + C + D-1 + D-2 link together for an APSTA-mode binary (only stock sample that drives both `WIFI_MODE_AP` and `WIFI_MODE_STA` simultaneously) — Day 49 |
 | `examples/wifi/roaming/roaming_app/` | Phase A + IDF roaming-library glue (BSS Transition Management, RSSI threshold hooks) link clean on top of station mode — Day 49 |
+| `examples/wifi/wps/` | WPS (PBC) state-machine link surface (`esp_wifi_wps_enable/start/disable`) — Day 52 |
+| `examples/wifi/smart_config/` | ESPTOUCH provisioning entry-points (`esp_smartconfig_*`) — Day 52 |
+| `examples/wifi/ftm/` | FTM (Fine Timing Measurement) initiator/responder API (`esp_wifi_ftm_*`) — Day 52 |
+| `examples/wifi/espnow/` | ESP-NOW transport API (`esp_now_*`) link clean against the shim — Day 52 |
+| `examples/wifi/wps_softap_registrar/` | WPS Registrar role on top of SoftAP — Day 52 |
+| `examples/wifi/itwt/` | 802.11ax iTWT / TWT API (`esp_wifi_sta_itwt_setup`, `esp_wifi_sta_twt_config`) link clean as ESP_ERR_NOT_SUPPORTED stubs on the non-HE esp32 target — Day 52 |
+
+### Day 52 — wide build-only sweep
+
+Day 52 doubles the build-only sample count to nine by running the
+existing `tools/build-stock-sample.sh` against every remaining
+`examples/wifi/**` sample and promoting every one that links clean.
+Five (`wps`, `smart_config`, `ftm`, `espnow`, `wps_softap_registrar`)
+already linked against the shim with zero source diff and zero shim
+work — the build success itself is the strongest currently-available
+proof that those flagship feature subsystems' public-symbol surface is
+already covered.  A sixth (`itwt`) needed two new link-clean stubs
+(`esp_wifi_sta_itwt_setup` / `esp_wifi_sta_twt_config`) returning
+`ESP_ERR_NOT_SUPPORTED`, since 802.11ax (HE) is only present on
+ESP32-C5/C6/... — never on the esp32 part the QEMU shim emulates.
+
+Two samples remain blocked behind a wrapper-script enhancement
+(`wifi_eap_fast/`, `wifi_enterprise/` both use `idf_component_register
+EMBED_TXTFILES ca.pem ...` whose paths the current wrap-script
+generator does not propagate).  See `BACKLOG.md` for the follow-up
+task.
+
+Day 52 also fixes a path-resolution bug in
+`tools/build-stock-sample.sh`: `WRAP_DIR` used to be defined as
+`${BUILD_DIR}/../_qemu_wrap_<sample>`, which after `rm -rf
+${BUILD_DIR}` left a non-canonical path component (`build_qemu/..`)
+that the kernel could not traverse on the next write.  `WRAP_DIR`
+is now computed via `dirname` so the path is purely lexical.
 
 ### Day 51 — `power_save` runtime promotion
 

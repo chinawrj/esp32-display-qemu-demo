@@ -273,6 +273,57 @@ def test_basic_wifi_smoke_includes_roaming_app_build_only():
             "station|build_only") in script
 
 
+def test_basic_wifi_smoke_includes_day52_wide_build_only_sweep():
+    """Day-52: extend build-only stock-sample coverage to wps,
+    smart_config, ftm, espnow, wps_softap_registrar, and itwt — the
+    remaining ESP-IDF Wi-Fi samples that *link* clean today against the
+    QEMU shim (after Day-52 added esp_wifi_sta_itwt_setup /
+    esp_wifi_sta_twt_config stubs for the non-HE esp32 target).
+
+    Build coverage is the cheapest unambiguous regression gate against
+    silent shim symbol drops: every sample below pulls in a different
+    Wi-Fi feature subsystem (WPS-PBC, ESPTOUCH, FTM, ESP-NOW, WPS
+    Registrar, iTWT) and any future esp_wifi_qemu/* edit that loses a
+    public symbol surfaces here as a link error before it reaches
+    runtime.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    expected = [
+        "wps|${IDF_PATH}/examples/wifi/wps|station|build_only",
+        "smart_config|${IDF_PATH}/examples/wifi/smart_config|station|build_only",
+        "ftm|${IDF_PATH}/examples/wifi/ftm|station|build_only",
+        "espnow|${IDF_PATH}/examples/wifi/espnow|station|build_only",
+        ("wps_softap_registrar|${IDF_PATH}/examples/wifi/wps_softap_registrar|"
+         "softap|build_only"),
+        "itwt|${IDF_PATH}/examples/wifi/itwt|station|build_only",
+    ]
+    for entry in expected:
+        assert entry in script, (
+            f"Day-52 build-only sweep missing {entry!r}"
+        )
+
+
+def test_esp_wifi_qemu_provides_he_itwt_stubs():
+    """Day-52: `examples/wifi/itwt` references esp_wifi_sta_itwt_setup
+    and esp_wifi_sta_twt_config — both declared in esp_wifi_he.h and
+    only implemented on HE-capable targets (C5/C6/...).  ESP32 (the
+    QEMU target) is non-HE, so the QEMU shim must define them as
+    link-clean stubs returning ESP_ERR_NOT_SUPPORTED to preserve the
+    zero-source-diff drop-in contract.
+    """
+    src = (PROJECT_ROOT / "components/esp_wifi_qemu/esp_wifi_extras.c").read_text()
+    assert "esp_wifi_sta_itwt_setup" in src, (
+        "HE/iTWT stub esp_wifi_sta_itwt_setup is missing from the shim"
+    )
+    assert "esp_wifi_sta_twt_config" in src, (
+        "HE/TWT stub esp_wifi_sta_twt_config is missing from the shim"
+    )
+    assert "ESP_ERR_NOT_SUPPORTED" in src, (
+        "Day-52 HE stubs must report ESP_ERR_NOT_SUPPORTED on the "
+        "non-HE esp32 target rather than silently returning ESP_OK"
+    )
+
+
 def test_stock_sample_release_doc_exists():
     doc = DOCS_DIR / "qemu-wifi-stock-samples.md"
     assert doc.exists(), "stock Wi-Fi sample release guide is missing"

@@ -82,6 +82,28 @@ SAMPLES=(
     # an 802.11k/v-capable AP cluster which neither the smoke gate nor
     # any single mock_wpa_supplicant can stand up today.
     "roaming_app|${IDF_PATH}/examples/wifi/roaming/roaming_app|station|build_only"
+    # Day-52: a wide build-only sweep of the remaining stock IDF Wi-Fi
+    # samples.  Each one builds clean against the QEMU shim today with
+    # zero source diff, proving the link-time API surface is already
+    # complete enough for these flagship Wi-Fi feature demos.  Runtime
+    # promotion for each will need its own protocol-level mock (WPS-PBC
+    # exchange, ESPTOUCH air-interface, FTM 11mc handshake, ESP-NOW
+    # peer table, AP that advertises HE iTWT, WPS Registrar role) which
+    # is multi-day work each.  Build coverage in the meantime is the
+    # single strongest North-Star check: any future shim regression that
+    # silently drops a public symbol will surface here as a link error.
+    "wps|${IDF_PATH}/examples/wifi/wps|station|build_only"
+    "smart_config|${IDF_PATH}/examples/wifi/smart_config|station|build_only"
+    "ftm|${IDF_PATH}/examples/wifi/ftm|station|build_only"
+    "espnow|${IDF_PATH}/examples/wifi/espnow|station|build_only"
+    "wps_softap_registrar|${IDF_PATH}/examples/wifi/wps_softap_registrar|softap|build_only"
+    # Day-52: itwt only links after the new HE/iTWT stubs added to
+    # components/esp_wifi_qemu/esp_wifi_extras.c (esp_wifi_sta_itwt_setup
+    # / esp_wifi_sta_twt_config returning ESP_ERR_NOT_SUPPORTED).  The
+    # esp32 we emulate is not an 802.11ax part, so on real silicon
+    # these symbols only exist in HE-capable targets (C5/C6 etc.); the
+    # stub keeps the drop-in contract for esp32 builds.
+    "itwt|${IDF_PATH}/examples/wifi/itwt|station|build_only"
 )
 
 PASS=0

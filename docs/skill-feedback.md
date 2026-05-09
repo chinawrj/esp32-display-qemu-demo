@@ -177,3 +177,19 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: Day-51 found this while promoting `wifi/power_save` (whose `sdkconfig.defaults` enables PM + tickless idle + light sleep) to runtime in the smoke gate. Workaround for now is to disable PM in the per-sample sdkconfig overlay — this preserves zero source diff because the overlay channel is allowed by the policy, and the `esp_wifi_set_ps()` API (the Wi-Fi-side knob the sample is actually meant to demonstrate) still exercises end-to-end. Long-term, modelling the ESP32 RTC peripheral well enough for `rtc_sleep_pd` to no-op (or stub `esp_light_sleep_start` directly) would let any stock light-sleep sample run unmodified. Track as a Phase-F item if a stock sample explicitly needs it.
 - **Workaround**: per-sample `CONFIG_PM_ENABLE=n` + `CONFIG_FREERTOS_USE_TICKLESS_IDLE=n` overlay.
 - **Priority**: low
+
+### FB-023 (2026-05-10)
+- **Skill**: tools/build-stock-sample.sh
+- **Category**: bug
+- **Summary**: After Day-51's SDKCONFIG_DEFAULTS-hash invalidator runs `rm -rf "${BUILD_DIR}"`, the next file write to `${BUILD_DIR}/../_qemu_wrap_<sample>/.sdkconfig_defaults.sha1` fails with "No such file or directory".
+- **Detail**: WRAP_DIR was defined as `${BUILD_DIR}/../_qemu_wrap_<sample>`. Linux resolves path components left-to-right at the open(2) call, so once `build_qemu/` no longer exists the kernel can't traverse `build_qemu/..` to reach the sibling wrap dir, even though `..` is purely lexical to humans. Symptom on Day 52 was that any sample whose overlay had changed since the previous build (fast_scan, power_save, softap_sta, roaming_app) failed at the hash-write step with no further explanation.
+- **Workaround**: define `WRAP_DIR="$(dirname "${BUILD_DIR}")/_qemu_wrap_<sample>"` so the path is purely lexical and never includes the deleted intermediate component.
+- **Priority**: medium
+
+### FB-024 (2026-05-10)
+- **Skill**: tools/build-stock-sample.sh
+- **Category**: missing-feature
+- **Summary**: The wrapper-project generator does not propagate `EMBED_FILES` / `EMBED_TXTFILES` into the synthetic `main/` dir, blocking any stock sample whose `main/CMakeLists.txt` embeds binary blobs (currently `wifi/wifi_eap_fast/`, `wifi/wifi_enterprise/`).
+- **Detail**: Day 52 sweep found both samples error at CMake parse time: "Cannot find source file: .../_qemu_wrap_<sample>/main/ca.pem". The current wrapper only symlinks the .c/.h sources from the original `main/` and forwards `INCLUDE_DIRS`, so CMake looks for the cert/PAC files relative to the wrap dir and fails. Same pattern would block any future sample that embeds binary assets via the build system.
+- **Workaround**: enhance the awk pass that copies the original `main/CMakeLists.txt`'s component clauses to also symlink every `EMBED_*` argument into `WRAP_MAIN_DIR/`. Keep the original argument list verbatim so `idf_component_register` finds them at the same relative path.
+- **Priority**: low

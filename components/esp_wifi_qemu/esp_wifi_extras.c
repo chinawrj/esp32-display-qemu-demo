@@ -415,4 +415,36 @@ esp_err_t esp_wifi_get_inactive_time(wifi_interface_t ifx, uint16_t *sec)
     return ESP_OK;
 }
 
+/* ---------------------------------------------------------------------------
+ * Day 52: HE / iTWT (802.11ax target wake time) link-clean stubs.
+ *
+ * The stock examples/wifi/itwt sample is a pure-software demo of the
+ * iTWT API surface declared in esp_wifi_he.h.  ESP32 (the QEMU target
+ * we emulate) is not an 802.11ax part, so on real hardware these symbols
+ * exist only in HE-capable targets (C5 / C6 / etc.).  To preserve the
+ * North-Star drop-in contract we expose them as ESP_ERR_NOT_SUPPORTED
+ * stubs — building succeeds with zero source diff, runtime cleanly tells
+ * the caller the feature is absent rather than crashing on a missing
+ * symbol at link time.
+ *
+ * We deliberately accept `void *` rather than the real
+ * `wifi_itwt_setup_config_t *` / `wifi_twt_config_t *` types so this TU
+ * does not depend on esp_wifi_he_types.h (which on the esp32 target is
+ * not always installed); the linker only cares about the mangled
+ * (C-flat) symbol name.
+ * ------------------------------------------------------------------------- */
+esp_err_t esp_wifi_sta_itwt_setup(void *setup_config)
+{
+    (void)setup_config;
+    ESP_LOGW(TAG, "esp_wifi_sta_itwt_setup: HE/iTWT not supported in QEMU shim");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t esp_wifi_sta_twt_config(void *config)
+{
+    (void)config;
+    ESP_LOGW(TAG, "esp_wifi_sta_twt_config: HE/TWT not supported in QEMU shim");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
 #endif /* CONFIG_ESP_WIFI_QEMU */
