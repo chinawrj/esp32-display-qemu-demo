@@ -218,9 +218,18 @@ extract_requires_kw() {
 SAMPLE_CMAKE="${SAMPLE_MAIN_DIR}/CMakeLists.txt"
 SAMPLE_REQUIRES=""
 SAMPLE_PRIV_REQUIRES=""
+SAMPLE_EMBED_FILES=""
+SAMPLE_EMBED_TXTFILES=""
 if [ -f "$SAMPLE_CMAKE" ]; then
     SAMPLE_REQUIRES="$(extract_requires_kw REQUIRES "$SAMPLE_CMAKE")"
     SAMPLE_PRIV_REQUIRES="$(extract_requires_kw PRIV_REQUIRES "$SAMPLE_CMAKE")"
+    # Day-53: propagate EMBED_FILES / EMBED_TXTFILES.  These are how
+    # stock samples (wifi_enterprise, wifi_eap_fast, ...) bake binary
+    # blobs (TLS certs, EAP-FAST PAC) into the firmware image; without
+    # propagation CMake would fail at parse time looking for the file
+    # inside the synthetic wrap dir's main/.
+    SAMPLE_EMBED_FILES="$(extract_requires_kw EMBED_FILES "$SAMPLE_CMAKE")"
+    SAMPLE_EMBED_TXTFILES="$(extract_requires_kw EMBED_TXTFILES "$SAMPLE_CMAKE")"
 fi
 
 # Merge: base + sample's REQUIRES + sample's PRIV_REQUIRES + esp_wifi_qemu
@@ -250,6 +259,26 @@ DEDUPED_REQUIRES="$(printf '%s\n' $MERGED_REQUIRES | awk '!seen[$0]++' | tr '\n'
         echo "    KCONFIG_PROJBUILD \"${SAMPLE_MAIN_DIR}/Kconfig.projbuild\""
     [ -f "${SAMPLE_MAIN_DIR}/Kconfig" ] && \
         echo "    KCONFIG \"${SAMPLE_MAIN_DIR}/Kconfig\""
+    # Day-53: re-emit EMBED_FILES / EMBED_TXTFILES with absolute paths
+    # back to the sample's main/.  Using absolute paths avoids the need
+    # to symlink each blob into WRAP_MAIN_DIR/ and matches how ESP-IDF
+    # treats EMBED_FILES (path is taken verbatim and resolved relative
+    # to the component's CMakeLists.txt — but absolute paths bypass
+    # that).
+    if [ -n "${SAMPLE_EMBED_FILES// /}" ]; then
+        echo "    EMBED_FILES"
+        for f in $SAMPLE_EMBED_FILES; do
+            [ -z "$f" ] && continue
+            echo "        \"${SAMPLE_MAIN_DIR}/${f}\""
+        done
+    fi
+    if [ -n "${SAMPLE_EMBED_TXTFILES// /}" ]; then
+        echo "    EMBED_TXTFILES"
+        for f in $SAMPLE_EMBED_TXTFILES; do
+            [ -z "$f" ] && continue
+            echo "        \"${SAMPLE_MAIN_DIR}/${f}\""
+        done
+    fi
     echo "    REQUIRES ${DEDUPED_REQUIRES}"
     echo ")"
 } > "${WRAP_MAIN_DIR}/CMakeLists.txt"

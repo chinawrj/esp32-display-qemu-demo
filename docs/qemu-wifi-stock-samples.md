@@ -37,8 +37,36 @@ console UART input).
 | `examples/wifi/espnow/` | ESP-NOW transport API (`esp_now_*`) link clean against the shim — Day 52 |
 | `examples/wifi/wps_softap_registrar/` | WPS Registrar role on top of SoftAP — Day 52 |
 | `examples/wifi/itwt/` | 802.11ax iTWT / TWT API (`esp_wifi_sta_itwt_setup`, `esp_wifi_sta_twt_config`) link clean as ESP_ERR_NOT_SUPPORTED stubs on the non-HE esp32 target — Day 52 |
+| `examples/wifi/wifi_eap_fast/` | EAP-FAST 802.1X enterprise auth — link surface from `esp_wifi_sta_wpa2_ent_*` family + TLS material (`ca.pem`, `pac_file.pac`) embedded via `EMBED_TXTFILES` — Day 53 |
+| `examples/wifi/wifi_enterprise/` | PEAP/TTLS 802.1X enterprise auth — link surface + TLS material (`ca.pem`, `client.crt`, `client.key`) embedded via `EMBED_TXTFILES` — Day 53 |
 
-### Day 52 — wide build-only sweep
+### Day 53 — finish 100% build-only coverage of `examples/wifi/**`
+
+Day 53 closes the last gap from the Day-52 sweep (FB-024) and brings
+build-only coverage of stock `examples/wifi/**` to **15/15** — every
+ESP-IDF Wi-Fi sample now links against the QEMU shim with **zero
+source diff**, the strongest possible regression gate against silent
+shim public-symbol drops.
+
+The two remaining samples — `wifi_eap_fast/` and `wifi_enterprise/` —
+were blocked at CMake parse time because their `main/CMakeLists.txt`
+embeds TLS material via `EMBED_TXTFILES ca.pem client.crt …`, and
+the wrapper-project generator in `tools/build-stock-sample.sh` was
+stripping every component-register clause it didn't explicitly
+re-emit.  Day 53 extends the existing awk-based extractor with two
+extra invocations (`EMBED_FILES`, `EMBED_TXTFILES`) and re-emits the
+clauses in the wrap component using **absolute paths** back to the
+sample's real `main/`.  Absolute paths bypass component-relative
+resolution, so no symlinking is needed — the same shape as the
+existing `INCLUDE_DIRS "${SAMPLE_MAIN_DIR}"` line.  See FB-025 for
+the convention going forward.
+
+Runtime promotion of either sample would need a real 802.1X / EAP
+RADIUS back-end, which the mock_wpa_supplicant does not provide
+(and is unlikely to ever provide cheaply).  Build-only coverage is
+the right level of investment for these two.
+
+
 
 Day 52 doubles the build-only sample count to nine by running the
 existing `tools/build-stock-sample.sh` against every remaining
@@ -52,11 +80,11 @@ already covered.  A sixth (`itwt`) needed two new link-clean stubs
 `ESP_ERR_NOT_SUPPORTED`, since 802.11ax (HE) is only present on
 ESP32-C5/C6/... — never on the esp32 part the QEMU shim emulates.
 
-Two samples remain blocked behind a wrapper-script enhancement
-(`wifi_eap_fast/`, `wifi_enterprise/` both use `idf_component_register
-EMBED_TXTFILES ca.pem ...` whose paths the current wrap-script
-generator does not propagate).  See `BACKLOG.md` for the follow-up
-task.
+Two samples remained blocked at end of Day 52 behind a wrapper-script
+enhancement (`wifi_eap_fast/`, `wifi_enterprise/` both use
+`idf_component_register EMBED_TXTFILES ca.pem ...` whose paths the
+Day-52 wrap-script generator did not propagate).  Day 53 closed that
+gap (FB-024 → resolved); see the Day-53 section above.
 
 Day 52 also fixes a path-resolution bug in
 `tools/build-stock-sample.sh`: `WRAP_DIR` used to be defined as

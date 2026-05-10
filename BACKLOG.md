@@ -73,13 +73,17 @@ A given sample is "supported" when:
   `WRAP_DIR` is computed via `dirname` rather than the
   `${BUILD_DIR}/..` path component (which broke after the Day-51
   hash invalidator wiped `BUILD_DIR/`).
-- Two stock Wi-Fi samples remain unbuilt: `wifi/wifi_eap_fast` and
-  `wifi/wifi_enterprise`, both blocked by an `EMBED_TXTFILES
-  ca.pem ...` clause in their `main/CMakeLists.txt` whose paths the
-  build-stock-sample.sh wrapper generator does not yet propagate
-  through the synthetic `main/` directory.  Cheapest follow-up:
-  teach the wrapper script to symlink any files referenced by
-  `EMBED_FILES` / `EMBED_TXTFILES` into the wrap dir.
+- Day 53 — `wifi/wifi_eap_fast` and `wifi/wifi_enterprise` join the
+  build-only set, bringing stock `examples/wifi/**` coverage to 15/15
+  with zero source diff.  Both samples bake TLS material via
+  `EMBED_TXTFILES ca.pem ...` in their `main/CMakeLists.txt`; until
+  Day 53 the wrapper-project generator stripped EMBED_* clauses while
+  rebuilding the synthetic `main/CMakeLists.txt`.  Day 53 closes
+  FB-024 by extending the awk extractor to also pull `EMBED_FILES`
+  and `EMBED_TXTFILES` argument lists out of the original
+  `main/CMakeLists.txt` and re-emitting them in the wrap component
+  with absolute paths back to the sample directory (no symlinking
+  needed — ESP-IDF accepts absolute paths verbatim).
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

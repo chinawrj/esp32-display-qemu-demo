@@ -303,6 +303,54 @@ def test_basic_wifi_smoke_includes_day52_wide_build_only_sweep():
         )
 
 
+def test_basic_wifi_smoke_includes_day53_eap_build_only_entries():
+    """Day-53: wifi_eap_fast and wifi_enterprise are the last two stock
+    ESP-IDF Wi-Fi samples.  Both require EMBED_TXTFILES to bake TLS
+    material (ca.pem / client.crt / client.key / pac_file.pac) into the
+    firmware image; until Day 53 the wrapper-project generator in
+    tools/build-stock-sample.sh stripped those clauses (and did not
+    propagate the file paths), so neither sample could be wrapped at
+    parse time.  Promotion to build-only smoke entries here brings
+    drop-in build coverage of `examples/wifi/**` to 15/15.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    for entry in (
+        "wifi_eap_fast|${IDF_PATH}/examples/wifi/wifi_eap_fast|station|build_only",
+        "wifi_enterprise|${IDF_PATH}/examples/wifi/wifi_enterprise|station|build_only",
+    ):
+        assert entry in script, f"Day-53 EAP build-only entry missing: {entry!r}"
+
+
+def test_build_stock_sample_propagates_embed_txtfiles():
+    """Day-53 (FB-024 closure): the wrapper-project generator must
+    extract `EMBED_FILES` and `EMBED_TXTFILES` from the sample's
+    main/CMakeLists.txt and re-emit them in the synthetic wrap
+    component, otherwise samples that bake binary blobs (TLS certs,
+    EAP-FAST PAC, custom firmware blobs) fail at CMake parse time.
+    Pin the awk-extractor + emit-paths combination so a future
+    refactor does not silently regress the EAP samples.
+    """
+    script = (TOOLS_DIR / "build-stock-sample.sh").read_text()
+    # The awk pass treats EMBED_FILES / EMBED_TXTFILES as keyword
+    # boundaries (so REQUIRES extraction stops at them) — the Day-53
+    # extension also calls extract_requires_kw with those keywords.
+    assert 'extract_requires_kw EMBED_FILES' in script, (
+        "build-stock-sample.sh must extract EMBED_FILES from sample "
+        "main/CMakeLists.txt (Day-53 FB-024 closure)"
+    )
+    assert 'extract_requires_kw EMBED_TXTFILES' in script, (
+        "build-stock-sample.sh must extract EMBED_TXTFILES from sample "
+        "main/CMakeLists.txt (Day-53 FB-024 closure)"
+    )
+    # The generated wrapper CMakeLists must re-emit both clauses.
+    assert 'echo "    EMBED_FILES"' in script, (
+        "wrapper CMakeLists must re-emit EMBED_FILES clause"
+    )
+    assert 'echo "    EMBED_TXTFILES"' in script, (
+        "wrapper CMakeLists must re-emit EMBED_TXTFILES clause"
+    )
+
+
 def test_esp_wifi_qemu_provides_he_itwt_stubs():
     """Day-52: `examples/wifi/itwt` references esp_wifi_sta_itwt_setup
     and esp_wifi_sta_twt_config — both declared in esp_wifi_he.h and

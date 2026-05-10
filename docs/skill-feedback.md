@@ -186,10 +186,19 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Workaround**: define `WRAP_DIR="$(dirname "${BUILD_DIR}")/_qemu_wrap_<sample>"` so the path is purely lexical and never includes the deleted intermediate component.
 - **Priority**: medium
 
-### FB-024 (2026-05-10)
+### FB-024 (2026-05-10) — RESOLVED 2026-05-11 (Day 53)
 - **Skill**: tools/build-stock-sample.sh
 - **Category**: missing-feature
 - **Summary**: The wrapper-project generator does not propagate `EMBED_FILES` / `EMBED_TXTFILES` into the synthetic `main/` dir, blocking any stock sample whose `main/CMakeLists.txt` embeds binary blobs (currently `wifi/wifi_eap_fast/`, `wifi/wifi_enterprise/`).
 - **Detail**: Day 52 sweep found both samples error at CMake parse time: "Cannot find source file: .../_qemu_wrap_<sample>/main/ca.pem". The current wrapper only symlinks the .c/.h sources from the original `main/` and forwards `INCLUDE_DIRS`, so CMake looks for the cert/PAC files relative to the wrap dir and fails. Same pattern would block any future sample that embeds binary assets via the build system.
 - **Workaround**: enhance the awk pass that copies the original `main/CMakeLists.txt`'s component clauses to also symlink every `EMBED_*` argument into `WRAP_MAIN_DIR/`. Keep the original argument list verbatim so `idf_component_register` finds them at the same relative path.
+- **Resolution (Day 53)**: extended the existing `extract_requires_kw` awk helper with two extra invocations (`EMBED_FILES`, `EMBED_TXTFILES`) and re-emit the clauses in the generated wrap CMakeLists with **absolute** paths back to the sample's real `main/`.  Absolute paths bypass the relative-to-component-CMakeLists resolution entirely, so no symlinking is needed.  Both EAP samples now build clean and were promoted into the basic-wifi smoke gate, finishing 15/15 build-only coverage of `examples/wifi/**`.
+- **Priority**: low
+
+### FB-025 (2026-05-11)
+- **Skill**: tools/build-stock-sample.sh
+- **Category**: convention
+- **Summary**: When propagating component-register clauses into the wrap component, prefer absolute paths over symlinks for any path-valued argument (EMBED_FILES, EMBED_TXTFILES, KCONFIG, KCONFIG_PROJBUILD, ...).
+- **Detail**: ESP-IDF's `idf_component_register` resolves relative path arguments against the component's own `CMakeLists.txt`, so a symlink would have to live in the wrap component's `main/` and CMake's `target_sources` / `EmbedTextFiles` would still re-resolve through the symlink — fine on Linux but adds a layer of indirection that breaks if tooling later inspects the component manifest.  Absolute paths emitted directly into the wrap CMakeLists are simpler, idempotent across `rm -rf BUILD_DIR` cycles, and match how `INCLUDE_DIRS "${SAMPLE_MAIN_DIR}"` already works in the same script.
+- **Workaround**: continue to use `"${SAMPLE_MAIN_DIR}/${file}"` form for all path-valued component clauses introduced in the future (e.g. LDFRAGMENTS, WHOLE_ARCHIVE files).
 - **Priority**: low

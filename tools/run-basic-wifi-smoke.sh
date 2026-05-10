@@ -104,6 +104,14 @@ SAMPLES=(
     # these symbols only exist in HE-capable targets (C5/C6 etc.); the
     # stub keeps the drop-in contract for esp32 builds.
     "itwt|${IDF_PATH}/examples/wifi/itwt|station|build_only"
+    # Day-53: wifi_eap_fast and wifi_enterprise embed TLS material via
+    # EMBED_TXTFILES.  The wrapper script gained EMBED_FILES /
+    # EMBED_TXTFILES propagation today (Day 53), unblocking these final
+    # two stock Wi-Fi samples and bringing build-only coverage to 15/15.
+    # Runtime promotion would need a real 802.1X / EAP-FAST RADIUS
+    # back-end, which the mock_wpa_supplicant does not provide.
+    "wifi_eap_fast|${IDF_PATH}/examples/wifi/wifi_eap_fast|station|build_only"
+    "wifi_enterprise|${IDF_PATH}/examples/wifi/wifi_enterprise|station|build_only"
 )
 
 PASS=0
