@@ -39,6 +39,56 @@ console UART input).
 | `examples/wifi/itwt/` | 802.11ax iTWT / TWT API (`esp_wifi_sta_itwt_setup`, `esp_wifi_sta_twt_config`) link clean as ESP_ERR_NOT_SUPPORTED stubs on the non-HE esp32 target — Day 52 |
 | `examples/wifi/wifi_eap_fast/` | EAP-FAST 802.1X enterprise auth — link surface from `esp_wifi_sta_wpa2_ent_*` family + TLS material (`ca.pem`, `pac_file.pac`) embedded via `EMBED_TXTFILES` — Day 53 |
 | `examples/wifi/wifi_enterprise/` | PEAP/TTLS 802.1X enterprise auth — link surface + TLS material (`ca.pem`, `client.crt`, `client.key`) embedded via `EMBED_TXTFILES` — Day 53 |
+| `examples/protocols/sockets/tcp_client/` | lwIP-over-Wi-Fi BSD TCP-client socket API (`socket`, `connect`, `send`, `recv`) links clean on top of `example_connect()` — Day 54 |
+| `examples/protocols/sockets/tcp_server/` | BSD TCP-server socket API (`bind`, `listen`, `accept`) links clean on top of `example_connect()` — Day 54 |
+| `examples/protocols/sockets/udp_client/` | BSD UDP-client socket API (`sendto`) links clean — Day 54 |
+| `examples/protocols/sockets/udp_server/` | BSD UDP-server socket API (`recvfrom`) links clean — Day 54 |
+| `examples/protocols/http_request/` | lwIP DNS resolver + raw HTTP request over a BSD socket — Day 54 |
+| `examples/protocols/sntp/` | LwIP SNTP client over Wi-Fi — Day 54 |
+
+### Day 54 — drop-in coverage extends beyond `examples/wifi/**`
+
+Day 54 begins the second phase of the North-Star push: with stock
+`examples/wifi/**` now at 15/15 build-only coverage, the natural
+next target is every other Wi-Fi-dependent IDF subtree
+(`examples/protocols/**`, `examples/system/ota/**`,
+`examples/wifi_provisioning/**`) — all ~40 of which call
+`example_connect()` and then layer sockets / TLS / HTTP / MQTT on
+top of the QEMU Wi-Fi shim.  Day 54 promotes six already-link-clean
+P1 samples from `examples/protocols/**` into the basic-wifi smoke
+gate (above table), taking total stock-sample coverage from 15 to
+**21**.  The gate now proves, on every CI run, that the lwIP /
+BSD-socket / DNS surfaces wired on top of the QEMU Wi-Fi shim are
+strong enough to build every common socket family with **zero
+source diff**.
+
+Day 54 also closes FB-026, a long-standing latent bug in the
+wrapper-script awk extractor: the `\)` strip regex used to fire
+before the keyword-boundary regex, so any `idf_component_register`
+clause whose continuation line contained both another keyword and
+the terminating `)` (e.g. `udp_client/main/CMakeLists.txt`'s
+`INCLUDE_DIRS "."`) leaked one argument list into the previous one.
+Reordering both branches of the extractor to check keyword
+boundaries first unblocks `udp_client` and any future sample with
+the same CMake shape; pinned by a new
+`tests/test_stock_sample_build.py::test_build_stock_sample_keyword_before_close_paren`
+regression.
+
+As a side benefit, `tools/build-stock-sample.sh` now also generates
+`merged_flash.bin` (the 2 MB QEMU-flashable image) at the end of
+every successful build.  The merge logic was previously embedded in
+`tools/run-stock-qemu.sh` and only triggered at runtime; lifting it
+into the build step keeps the "build artifact" abstraction
+self-contained and makes every smoke-gate sample one step closer to
+being directly QEMU-bootable.  This is also what lets the existing
+GAP-I unit tests in `tests/test_gap_i_tcp.py` activate the
+`TestTcpClientBuild::test_merged_flash_exists` assertion as soon
+as the smoke gate builds `tcp_client`.
+
+Samples that need CMake-variable expansion in `PRIV_REQUIRES`
+(e.g. `protocols/http_server/simple`, `protocols/https_server/simple`,
+several `protocols/mqtt/*`, `protocols/ota/*`) are deferred to a
+future day; see FB-027.
 
 ### Day 53 — finish 100% build-only coverage of `examples/wifi/**`
 

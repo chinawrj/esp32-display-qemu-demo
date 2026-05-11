@@ -303,6 +303,68 @@ def test_basic_wifi_smoke_includes_day52_wide_build_only_sweep():
         )
 
 
+def test_basic_wifi_smoke_includes_day54_protocol_samples():
+    """Day-54: drop-in build-only coverage extends beyond
+    `examples/wifi/**`.  Every sample below uses `example_connect()`
+    (protocol_examples_common) to bring up Wi-Fi station via the QEMU
+    shim and then opens UDP/TCP sockets or HTTP/SNTP clients on top
+    of the lwIP stack.  Build success here is the strongest evidence
+    that the lwIP-over-QEMU-Wi-Fi data plane links cleanly for every
+    common socket family with zero source diff.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    for entry in (
+        "tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|station|build_only",
+        "tcp_server|${IDF_PATH}/examples/protocols/sockets/tcp_server|station|build_only",
+        "udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|station|build_only",
+        "udp_server|${IDF_PATH}/examples/protocols/sockets/udp_server|station|build_only",
+        "http_request|${IDF_PATH}/examples/protocols/http_request|station|build_only",
+        "sntp|${IDF_PATH}/examples/protocols/sntp|station|build_only",
+    ):
+        assert entry in script, f"Day-54 protocol-sample smoke entry missing: {entry!r}"
+
+
+def test_build_stock_sample_keyword_before_close_paren():
+    """Day-54 FB-026 regression gate: the wrap-script awk extractor
+    must check the component-register keyword boundary BEFORE the
+    close-paren boundary.  A continuation line like
+    `INCLUDE_DIRS ".")` matches both regexes; if `)` wins first the
+    extractor leaks the other keyword value into the current keyword
+    argument list (which broke protocols/sockets/udp_client whose
+    main/CMakeLists.txt has PRIV_REQUIRES ${priv_requires} then
+    INCLUDE_DIRS "." on consecutive lines).  Pin the order so a
+    future refactor cannot silently regress udp_client and friends.
+    """
+    script = (TOOLS_DIR / "build-stock-sample.sh").read_text()
+    # Locate both branches of the awk extractor (in_kw continuation
+    # branch and the initial-match branch).  In each, the keyword
+    # regex must appear before the `\\)` regex.
+    in_kw_idx = script.find("if (in_kw) {")
+    assert in_kw_idx > 0, "extract_requires_kw continuation branch missing"
+    end_idx = script.find("re = \"(^|[^A-Z_])\" kw", in_kw_idx)
+    assert end_idx > in_kw_idx, "extract_requires_kw initial-match branch missing"
+    cont_branch = script[in_kw_idx:end_idx]
+    kw_pos = cont_branch.find("EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD")
+    paren_pos = cont_branch.find("/\\)/")
+    assert kw_pos > 0 and paren_pos > 0, (
+        "continuation branch must check both keyword and close-paren"
+    )
+    assert kw_pos < paren_pos, (
+        "FB-026: keyword-boundary check must come BEFORE close-paren "
+        "check in the in_kw continuation branch"
+    )
+    init_branch = script[end_idx:script.find("' \"$2\"", end_idx)]
+    kw_pos = init_branch.find("EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD")
+    paren_pos = init_branch.find("/\\)/")
+    assert kw_pos > 0 and paren_pos > 0, (
+        "initial-match branch must check both keyword and close-paren"
+    )
+    assert kw_pos < paren_pos, (
+        "FB-026: keyword-boundary check must come BEFORE close-paren "
+        "check in the initial-match branch"
+    )
+
+
 def test_basic_wifi_smoke_includes_day53_eap_build_only_entries():
     """Day-53: wifi_eap_fast and wifi_enterprise are the last two stock
     ESP-IDF Wi-Fi samples.  Both require EMBED_TXTFILES to bake TLS

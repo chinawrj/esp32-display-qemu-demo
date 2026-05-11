@@ -202,3 +202,19 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: ESP-IDF's `idf_component_register` resolves relative path arguments against the component's own `CMakeLists.txt`, so a symlink would have to live in the wrap component's `main/` and CMake's `target_sources` / `EmbedTextFiles` would still re-resolve through the symlink — fine on Linux but adds a layer of indirection that breaks if tooling later inspects the component manifest.  Absolute paths emitted directly into the wrap CMakeLists are simpler, idempotent across `rm -rf BUILD_DIR` cycles, and match how `INCLUDE_DIRS "${SAMPLE_MAIN_DIR}"` already works in the same script.
 - **Workaround**: continue to use `"${SAMPLE_MAIN_DIR}/${file}"` form for all path-valued component clauses introduced in the future (e.g. LDFRAGMENTS, WHOLE_ARCHIVE files).
 - **Priority**: low
+
+### FB-026 (2026-05-11) — RESOLVED Day 54
+- **Skill**: tools/build-stock-sample.sh
+- **Category**: bug
+- **Summary**: In `extract_requires_kw`'s awk pass, the `\)`-strip regex fires before the keyword-boundary regex, leaking the next keyword's value into the previous keyword's argument list when a continuation line contains both.
+- **Detail**: A real-world trigger is `examples/protocols/sockets/udp_client/main/CMakeLists.txt`, whose `idf_component_register(...)` looks like `SRCS "udp_client.c"\n                       INCLUDE_DIRS ".")`. Captured under `SRCS`, the continuation line first matches the `\)` regex; awk strips from `)` onward but the prior side-effects already printed the leading whitespace + `INCLUDE_DIRS "."`. Net result: `INCLUDE_DIRS .` leaks into `SRCS`. Same shape would corrupt any sample where a multi-line clause's terminal line bears another keyword.
+- **Resolution (Day 54)**: in both branches of the extractor (continuation `in_kw=1` and initial-match), reorder so the keyword-boundary regex test runs first; only after no keyword match does the `\)` strip fire. Apostrophes were removed from in-line awk comments to keep the script embeddable inside bash single quotes. Pinned by a new regression test `test_build_stock_sample_keyword_before_close_paren` in `tests/test_stock_sample_build.py`.
+- **Priority**: medium
+
+### FB-027 (2026-05-11) — OPEN
+- **Skill**: tools/build-stock-sample.sh
+- **Category**: missing-feature
+- **Summary**: The textual awk extractor cannot evaluate CMake variable expansion, so any sample whose `idf_component_register` references `PRIV_REQUIRES ${requires}` (with `list(APPEND requires ...)` earlier in the file) loses its requires list.
+- **Detail**: Concretely blocks `protocols/http_server/simple`, `protocols/https_server/simple`, several `protocols/mqtt/*` and `protocols/ota/*` samples — all of which build the requires list via `list(APPEND requires esp-tls esp_http_server ...)` before passing `${requires}` to `idf_component_register`. The wrapper today captures the literal token `${requires}` and never sees the appended component names, so the link step fails (`esp_tls_crypto.h: No such file or directory` and friends).
+- **Workaround**: either (a) probe-configure the original sample first with `idf.py -B /tmp/probe reconfigure` and dump the resolved component dependencies, then re-emit them as literals; or (b) teach the awk extractor to evaluate `list(APPEND <var> ...)` and `set(<var> ...)` lines in the same file before substituting `${var}` references. Both are non-trivial; deferred until a stock sample explicitly demands them.
+- **Priority**: medium

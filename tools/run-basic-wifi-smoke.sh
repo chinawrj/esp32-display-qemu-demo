@@ -112,6 +112,24 @@ SAMPLES=(
     # back-end, which the mock_wpa_supplicant does not provide.
     "wifi_eap_fast|${IDF_PATH}/examples/wifi/wifi_eap_fast|station|build_only"
     "wifi_enterprise|${IDF_PATH}/examples/wifi/wifi_enterprise|station|build_only"
+    # Day-54: extend drop-in build-only coverage beyond examples/wifi/**.
+    # Every sample below uses example_connect() (protocol_examples_common)
+    # to bring up a Wi-Fi station via the QEMU shim and then opens
+    # UDP/TCP sockets or HTTP/SNTP clients on top of the lwIP stack.
+    # Build success here is the strongest evidence that the lwIP-over
+    # QEMU-Wi-Fi data plane links cleanly for every common socket
+    # family with zero source diff in the sample tree.  Day-54 also
+    # fixed the wrap-script awk extractor (FB-026): on a continuation
+    # line containing both a component keyword and a close-paren, the
+    # extractor now stops at the keyword rather than at the paren so
+    # multi-line idf_component_register clauses with CMake-variable
+    # PRIV_REQUIRES (e.g. udp_client) extract correctly.
+    "tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|station|build_only"
+    "tcp_server|${IDF_PATH}/examples/protocols/sockets/tcp_server|station|build_only"
+    "udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|station|build_only"
+    "udp_server|${IDF_PATH}/examples/protocols/sockets/udp_server|station|build_only"
+    "http_request|${IDF_PATH}/examples/protocols/http_request|station|build_only"
+    "sntp|${IDF_PATH}/examples/protocols/sntp|station|build_only"
 )
 
 PASS=0

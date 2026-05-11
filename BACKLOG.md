@@ -84,6 +84,22 @@ A given sample is "supported" when:
   `main/CMakeLists.txt` and re-emitting them in the wrap component
   with absolute paths back to the sample directory (no symlinking
   needed — ESP-IDF accepts absolute paths verbatim).
+- Day 54 — drop-in coverage extends **beyond** `examples/wifi/**`.
+  Six samples from `examples/protocols/**` join the basic-wifi smoke
+  gate as build_only entries (`sockets/tcp_client`, `sockets/tcp_server`,
+  `sockets/udp_client`, `sockets/udp_server`, `http_request`, `sntp`),
+  taking total stock-sample coverage from 15 to 21.  Day 54 also
+  closes FB-026 by reordering the keyword-boundary check ahead of
+  the `)` check in the wrapper-script awk extractor — without this,
+  any `idf_component_register(...)` clause whose continuation line
+  contained both a new keyword and a `)` (e.g. `udp_client`'s
+  `INCLUDE_DIRS "."` on the line that closes the call) leaked the
+  next keyword's value into the previous keyword's argument list.
+  As a side benefit, `tools/build-stock-sample.sh` now also produces
+  a self-contained `merged_flash.bin` at the end of every successful
+  build (the merge logic was previously only triggered by
+  `tools/run-stock-qemu.sh` at runtime), so every smoke-gate sample
+  is one step closer to being directly QEMU-bootable.
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

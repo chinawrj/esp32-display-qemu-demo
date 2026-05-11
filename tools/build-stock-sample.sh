@@ -179,15 +179,22 @@ extract_requires_kw() {
             # strip line comments
             sub(/#.*$/, "", line)
             if (in_kw) {
-                # stop at next keyword or close paren
-                if (line ~ /\)/) {
-                    sub(/\).*$/, "", line)
-                    print line
-                    exit
-                }
+                # Day-54 FB-026: check keyword boundary BEFORE close-paren.
+                # A continuation line like `INCLUDE_DIRS ".")` matches
+                # both regexes; if we strip from `)` first we leak the
+                # other keyword value into the current argument list
+                # (which broke protocols/sockets/udp_client whose
+                # main/CMakeLists.txt has PRIV_REQUIRES ${priv_requires}
+                # then INCLUDE_DIRS "." on consecutive lines).
                 if (line ~ /(SRCS|INCLUDE_DIRS|PRIV_INCLUDE_DIRS|REQUIRES|PRIV_REQUIRES|EMBED_FILES|EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD|LDFRAGMENTS|WHOLE_ARCHIVE)[[:space:]]/) {
                     # next keyword reached
                     sub(/(SRCS|INCLUDE_DIRS|PRIV_INCLUDE_DIRS|REQUIRES|PRIV_REQUIRES|EMBED_FILES|EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD|LDFRAGMENTS|WHOLE_ARCHIVE).*$/, "", line)
+                    print line
+                    exit
+                }
+                # stop at close paren
+                if (line ~ /\)/) {
+                    sub(/\).*$/, "", line)
                     print line
                     exit
                 }
@@ -199,13 +206,15 @@ extract_requires_kw() {
             if (line ~ re) {
                 in_kw=1
                 sub(".*" kw "[[:space:]]", "", line)
-                if (line ~ /\)/) {
-                    sub(/\).*$/, "", line)
+                # Day-54 FB-026: same ordering fix as continuation
+                # branch above (keyword boundary before close-paren).
+                if (line ~ /(SRCS|INCLUDE_DIRS|PRIV_INCLUDE_DIRS|REQUIRES|PRIV_REQUIRES|EMBED_FILES|EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD|LDFRAGMENTS|WHOLE_ARCHIVE)[[:space:]]/) {
+                    sub(/(SRCS|INCLUDE_DIRS|PRIV_INCLUDE_DIRS|REQUIRES|PRIV_REQUIRES|EMBED_FILES|EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD|LDFRAGMENTS|WHOLE_ARCHIVE).*$/, "", line)
                     print line
                     exit
                 }
-                if (line ~ /(SRCS|INCLUDE_DIRS|PRIV_INCLUDE_DIRS|REQUIRES|PRIV_REQUIRES|EMBED_FILES|EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD|LDFRAGMENTS|WHOLE_ARCHIVE)[[:space:]]/) {
-                    sub(/(SRCS|INCLUDE_DIRS|PRIV_INCLUDE_DIRS|REQUIRES|PRIV_REQUIRES|EMBED_FILES|EMBED_TXTFILES|KCONFIG|KCONFIG_PROJBUILD|LDFRAGMENTS|WHOLE_ARCHIVE).*$/, "", line)
+                if (line ~ /\)/) {
+                    sub(/\).*$/, "", line)
                     print line
                     exit
                 }
@@ -303,6 +312,41 @@ idf.py \
 
 echo ""
 echo "✓ Build succeeded."
-echo "  Flash image : ${BUILD_DIR}/merged_flash.bin (create with tools/merge-flash.sh)"
+
+# Day-54: produce a flashable merged_flash.bin alongside the build so
+# downstream consumers (run-stock-qemu.sh, GAP-I/GAP-B unit tests) do
+# not have to re-invoke a separate merge step.  The merge logic is
+# identical to the one previously embedded in tools/run-stock-qemu.sh,
+# but pre-generating it here keeps the "build artifact" abstraction
+# complete: after build-stock-sample.sh exits cleanly, build_qemu/
+# contains a self-contained flash image.
+FLASH_IMAGE="${BUILD_DIR}/merged_flash.bin"
+IDF_PYTHON="$(ls ~/.espressif/python_env/idf*_env/bin/python3 2>/dev/null | sort | tail -1 || echo python3)"
+"$IDF_PYTHON" - <<'PYEOF' "$BUILD_DIR" "$FLASH_IMAGE" "$IDF_PATH" || true
+import json, sys, subprocess, pathlib
+build_dir = pathlib.Path(sys.argv[1])
+out_img   = sys.argv[2]
+idf_path  = pathlib.Path(sys.argv[3])
+esptool   = idf_path / "components" / "esptool_py" / "esptool" / "esptool.py"
+flasher = build_dir / "flasher_args.json"
+if not flasher.is_file():
+    # No flasher_args.json — likely a stubbed idf.py in tests, or the
+    # underlying build was a no-op.  Skip merge silently; downstream
+    # gates already check merged_flash.bin existence per-sample.
+    sys.exit(0)
+with open(flasher) as f:
+    fargs = json.load(f)
+flash_files = fargs.get("flash_files", {})
+cmd = [sys.executable, str(esptool),
+       "--chip", "esp32", "merge_bin",
+       "--fill-flash-size", "2MB",
+       "--flash_mode", "dio", "--flash_freq", "40m", "--flash_size", "2MB",
+       "-o", out_img]
+for offset, rel_path in sorted(flash_files.items(), key=lambda x: int(x[0], 16)):
+    cmd += [offset, str(build_dir / rel_path)]
+subprocess.check_call(cmd, stdout=subprocess.DEVNULL)
+PYEOF
+
+echo "  Flash image : ${BUILD_DIR}/merged_flash.bin"
 echo "  Boot in QEMU: set ESP_WIFI_CTRL_SOCKET and ESP_WIFI_PKT_SOCKET, then:"
 echo "    bash ${QEMU_WIFI_DIR}/tools/run-stock-qemu.sh ${BUILD_DIR}"
