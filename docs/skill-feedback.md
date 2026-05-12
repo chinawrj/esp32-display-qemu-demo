@@ -218,3 +218,19 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Detail**: Concretely blocks `protocols/http_server/simple`, `protocols/https_server/simple`, several `protocols/mqtt/*` and `protocols/ota/*` samples — all of which build the requires list via `list(APPEND requires esp-tls esp_http_server ...)` before passing `${requires}` to `idf_component_register`. The wrapper today captures the literal token `${requires}` and never sees the appended component names, so the link step fails (`esp_tls_crypto.h: No such file or directory` and friends).
 - **Workaround**: either (a) probe-configure the original sample first with `idf.py -B /tmp/probe reconfigure` and dump the resolved component dependencies, then re-emit them as literals; or (b) teach the awk extractor to evaluate `list(APPEND <var> ...)` and `set(<var> ...)` lines in the same file before substituting `${var}` references. Both are non-trivial; deferred until a stock sample explicitly demands them.
 - **Priority**: medium
+
+### FB-028 (2026-05-13) — RESOLVED Day 55
+- **Skill**: tools/build-stock-sample.sh
+- **Category**: bug
+- **Summary**: The wrapper-project generator silently dropped any non-`.` entry in the original sample's `INCLUDE_DIRS` keyword list, leaving samples whose `main/CMakeLists.txt` lists `INCLUDE_DIRS "include"` (e.g. `protocols/https_request`) unable to find headers under `main/include/` from sibling `main/*.c`.
+- **Detail**: Day-54 wrap emitted a single hard-coded `INCLUDE_DIRS "${SAMPLE_MAIN_DIR}"` line, regardless of what the original sample listed.  `https_request/main/CMakeLists.txt` has `INCLUDE_DIRS "include"`, and `main/time_sync.c:#include "time_sync.h"` lives at `main/include/time_sync.h`; the wrap saw no `include/` entry and the compile failed at `time_sync.c:27: fatal error: time_sync.h: No such file or directory`.  Same shape would block any future stock sample that uses a `main/include/` subdir layout.
+- **Resolution (Day 55)**: extend the existing `extract_requires_kw` helper with an INCLUDE_DIRS pass, then re-emit each entry in the wrap component CMakeLists with an absolute path under `${SAMPLE_MAIN_DIR}`.  `.` and `${SAMPLE_MAIN_DIR}` are deduplicated against the default entry; absolute paths in the original list pass through unchanged.  Pinned by `test_build_stock_sample_propagates_include_dirs_subdirs`.
+- **Priority**: medium
+
+### FB-029 (2026-05-13) — OPEN
+- **Skill**: tools/build-stock-sample.sh
+- **Category**: missing-feature
+- **Summary**: Stock samples that embed binary blobs via `target_add_binary_data(<target> ...)` at the project CMakeLists.txt level (not via `EMBED_FILES`/`EMBED_TXTFILES` inside `idf_component_register`) lose their assets because the wrap-script only inspects `main/CMakeLists.txt`.
+- **Detail**: Day-55 probe found `protocols/mqtt/ssl` failing at link with `undefined reference to '_binary_mqtt_eclipseprojects_io_pem_start'`.  Its project `CMakeLists.txt` calls `target_add_binary_data(mqtt_ssl.elf "main/mqtt_eclipseprojects_io.pem" TEXT)` — the asset is wired against the *project* target, not the component.  Our wrap project has a different elf name (`<sample>.elf` via `project(<sample>)`) and never re-emits the binary-data call, so the symbol the source references is never produced.  Same pattern likely blocks several other TLS-bearing samples in `protocols/mqtt/**` and `protocols/https_*/**`.
+- **Workaround**: either (a) parse the original project's `CMakeLists.txt` for `target_add_binary_data(...)` lines and re-emit them in the wrap project's CMakeLists.txt against the wrap project's elf target, OR (b) lift the binary asset into the wrap component via `EMBED_TXTFILES` (which would change the symbol name slightly — needs verifying that the source uses the EMBED form, not the target-bound name).
+- **Priority**: medium

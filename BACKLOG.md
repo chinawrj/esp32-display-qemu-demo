@@ -100,6 +100,18 @@ A given sample is "supported" when:
   build (the merge logic was previously only triggered by
   `tools/run-stock-qemu.sh` at runtime), so every smoke-gate sample
   is one step closer to being directly QEMU-bootable.
+- Day 55 — drop-in coverage advances further into
+  `examples/protocols/**`.  Two more samples join the basic-wifi
+  smoke gate as build_only entries:
+    - `protocols/mqtt/tcp` — esp_mqtt_client over plain TCP
+    - `protocols/https_request` — TLS-secured HTTP GET with
+      embedded CA cert
+  Total stock-sample coverage: 21 → **23**.  Day 55 also closes
+  FB-028 by extending `tools/build-stock-sample.sh` to extract the
+  original sample's `INCLUDE_DIRS` keyword list and re-emit each
+  non-`.` entry as `${SAMPLE_MAIN_DIR}/${entry}` — preserving any
+  `main/include/` style header layout (`https_request`,
+  `https_request/main/include/time_sync.h`) without symlinking.
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

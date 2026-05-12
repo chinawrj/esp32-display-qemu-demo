@@ -239,6 +239,14 @@ if [ -f "$SAMPLE_CMAKE" ]; then
     # inside the synthetic wrap dir's main/.
     SAMPLE_EMBED_FILES="$(extract_requires_kw EMBED_FILES "$SAMPLE_CMAKE")"
     SAMPLE_EMBED_TXTFILES="$(extract_requires_kw EMBED_TXTFILES "$SAMPLE_CMAKE")"
+    # Day-55 (FB-028): propagate INCLUDE_DIRS subdirs.  The original
+    # sample may list `INCLUDE_DIRS "include"` or similar to expose
+    # main/include/<headers>.h to its .c sources; until Day 55 the
+    # wrap silently overwrote INCLUDE_DIRS with just SAMPLE_MAIN_DIR,
+    # leaving any sample whose sources `#include "<subdir-header>.h"`
+    # (e.g. https_request -> time_sync.h in main/include/) unable to
+    # find its own headers at compile time.
+    SAMPLE_INCLUDE_DIRS="$(extract_requires_kw INCLUDE_DIRS "$SAMPLE_CMAKE")"
 fi
 
 # Merge: base + sample's REQUIRES + sample's PRIV_REQUIRES + esp_wifi_qemu
@@ -263,7 +271,25 @@ DEDUPED_REQUIRES="$(printf '%s\n' $MERGED_REQUIRES | awk '!seen[$0]++' | tr '\n'
         esac
         echo "        \"$src\""
     done
-    echo "    INCLUDE_DIRS \"${SAMPLE_MAIN_DIR}\""
+    # Day-55 (FB-028): re-emit INCLUDE_DIRS with absolute paths.  Every
+    # entry in the original sample's INCLUDE_DIRS list is mapped to
+    # `${SAMPLE_MAIN_DIR}/${entry}`, with `.` mapping to SAMPLE_MAIN_DIR
+    # itself.  This preserves the original sample's main/include/
+    # layout (e.g. https_request) without symlinking anything.
+    # SAMPLE_MAIN_DIR is always included to keep the existing
+    # behaviour for samples that omit INCLUDE_DIRS entirely (e.g.
+    # icmp_echo).
+    printf '    INCLUDE_DIRS "%s"\n' "${SAMPLE_MAIN_DIR}"
+    if [ -n "${SAMPLE_INCLUDE_DIRS// /}" ]; then
+        for d in $SAMPLE_INCLUDE_DIRS; do
+            [ -z "$d" ] && continue
+            case "$d" in
+                .|"${SAMPLE_MAIN_DIR}") continue ;;  # already emitted
+                /*) printf '        "%s"\n' "$d" ;;   # absolute, pass through
+                *)  printf '        "%s"\n' "${SAMPLE_MAIN_DIR}/${d}" ;;
+            esac
+        done
+    fi
     [ -f "${SAMPLE_MAIN_DIR}/Kconfig.projbuild" ] && \
         echo "    KCONFIG_PROJBUILD \"${SAMPLE_MAIN_DIR}/Kconfig.projbuild\""
     [ -f "${SAMPLE_MAIN_DIR}/Kconfig" ] && \

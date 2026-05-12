@@ -130,6 +130,16 @@ SAMPLES=(
     "udp_server|${IDF_PATH}/examples/protocols/sockets/udp_server|station|build_only"
     "http_request|${IDF_PATH}/examples/protocols/http_request|station|build_only"
     "sntp|${IDF_PATH}/examples/protocols/sntp|station|build_only"
+    # Day-55: continue extending into examples/protocols/**.  mqtt/tcp
+    # exercises the esp_mqtt_client API over plain TCP and links clean
+    # against the QEMU Wi-Fi shim with zero source diff.  https_request
+    # is added once Day-55's FB-028 (INCLUDE_DIRS subdir propagation)
+    # fix lands — the sample lists INCLUDE_DIRS "include" in its main/
+    # CMakeLists.txt; until Day 55 the wrapper-project generator
+    # silently dropped any non-"." entry, leaving main/include/*.h
+    # unreachable from main/*.c at compile time.
+    "mqtt_tcp|${IDF_PATH}/examples/protocols/mqtt/tcp|station|build_only"
+    "https_request|${IDF_PATH}/examples/protocols/https_request|station|build_only"
 )
 
 PASS=0

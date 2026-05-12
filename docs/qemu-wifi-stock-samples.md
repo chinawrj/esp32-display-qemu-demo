@@ -45,6 +45,49 @@ console UART input).
 | `examples/protocols/sockets/udp_server/` | BSD UDP-server socket API (`recvfrom`) links clean — Day 54 |
 | `examples/protocols/http_request/` | lwIP DNS resolver + raw HTTP request over a BSD socket — Day 54 |
 | `examples/protocols/sntp/` | LwIP SNTP client over Wi-Fi — Day 54 |
+| `examples/protocols/mqtt/tcp/` | esp_mqtt_client public API end-to-end over plain TCP — Day 55 |
+| `examples/protocols/https_request/` | TLS-secured HTTP GET with embedded CA / server certs — Day 55 (needs FB-028 INCLUDE_DIRS subdir propagation fix) |
+
+### Day 55 — drop-in coverage advances further into `examples/protocols/**`
+
+Day 55 lands two more samples in the basic-wifi smoke gate, taking
+total stock-sample coverage from 21 to **23**:
+
+- `protocols/mqtt/tcp` already linked clean against the QEMU shim
+  with zero source diff — direct promotion.
+- `protocols/https_request` was blocked because its
+  `main/CMakeLists.txt` lists `INCLUDE_DIRS "include"` to expose
+  `main/include/time_sync.h` to its `*.c` siblings.  Until Day 55
+  the wrapper-project generator overwrote the original INCLUDE_DIRS
+  with just `${SAMPLE_MAIN_DIR}`, silently dropping any non-`.`
+  entry and leaving `time_sync.h` unreachable from `time_sync.c`.
+
+Day 55 closes FB-028 by adding a second `extract_requires_kw`
+invocation for INCLUDE_DIRS and a re-emission loop in the wrap
+component CMakeLists: every entry of the original list is mapped
+to an absolute path under `${SAMPLE_MAIN_DIR}` (with `.` collapsed
+back to `${SAMPLE_MAIN_DIR}` to avoid duplication), and the default
+`${SAMPLE_MAIN_DIR}` entry is preserved so samples that omit
+INCLUDE_DIRS entirely (icmp_echo, smtp_client, ...) keep working.
+Pinned by `test_build_stock_sample_propagates_include_dirs_subdirs`
+in `tests/test_stock_sample_build.py`.
+
+Other Day-55 probe outcomes (deferred):
+- `protocols/esp_http_client` — blocked by FB-027 (uses
+  `PRIV_REQUIRES ${requires}` built via `list(APPEND requires
+  esp-tls ...)`; the textual awk extractor cannot evaluate the
+  variable).
+- `protocols/icmp_echo`, `protocols/smtp_client` — sample's
+  `main/CMakeLists.txt` declares **no** `PRIV_REQUIRES` but uses
+  components (`esp_console`, `mbedtls`) that normally reach `main`
+  via the implicit-all rule.  Our wrap always emits a non-empty
+  REQUIRES list (esp_wifi + ...), which disables that implicit-all
+  privilege.  Deferred until we add a probe-configure helper that
+  dumps the original sample's resolved component graph.
+- `protocols/mqtt/ssl` — uses `target_add_binary_data(target ...)`
+  at the **project** CMakeLists.txt level (not at the
+  `idf_component_register` level), which the wrap script does not
+  propagate.  Tracked as FB-029.
 
 ### Day 54 — drop-in coverage extends beyond `examples/wifi/**`
 

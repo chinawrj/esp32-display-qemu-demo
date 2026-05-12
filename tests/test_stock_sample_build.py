@@ -12,8 +12,10 @@ All tests are non-runtime (no QEMU, no hardware required).
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -362,6 +364,76 @@ def test_build_stock_sample_keyword_before_close_paren():
     assert kw_pos < paren_pos, (
         "FB-026: keyword-boundary check must come BEFORE close-paren "
         "check in the initial-match branch"
+    )
+
+
+def test_basic_wifi_smoke_includes_day55_protocol_samples():
+    """Day-55 extends drop-in coverage further into
+    `examples/protocols/**`.  `mqtt/tcp` exercises the esp_mqtt_client
+    public API end-to-end over plain TCP; `https_request` was unblocked
+    by Day-55's FB-028 fix (INCLUDE_DIRS subdir propagation) because
+    its main/CMakeLists.txt lists `INCLUDE_DIRS "include"` to expose
+    main/include/time_sync.h to its companion .c sources.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    for entry in (
+        "mqtt_tcp|${IDF_PATH}/examples/protocols/mqtt/tcp|station|build_only",
+        "https_request|${IDF_PATH}/examples/protocols/https_request|station|build_only",
+    ):
+        assert entry in script, f"Day-55 protocol-sample smoke entry missing: {entry!r}"
+
+
+def test_build_stock_sample_propagates_include_dirs_subdirs(tmp_path):
+    """Day-55 FB-028 regression gate: any non-`.` entry in the
+    original sample's `INCLUDE_DIRS` keyword list must be re-emitted
+    in the wrap component's CMakeLists with an absolute path under
+    SAMPLE_MAIN_DIR.  Without this, samples like https_request (whose
+    main/CMakeLists.txt declares `INCLUDE_DIRS "include"`) cannot
+    locate headers under main/include/ from main/*.c.
+    """
+    # Build a synthetic sample tree with a custom INCLUDE_DIRS subdir.
+    sample = tmp_path / "fake_sample"
+    main_dir = sample / "main"
+    inc_dir = main_dir / "include"
+    inc_dir.mkdir(parents=True)
+    (main_dir / "fake.c").write_text("/* fake */\n")
+    (inc_dir / "fake_priv.h").write_text("/* fake header */\n")
+    (sample / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        "project(fake_sample)\n"
+    )
+    (main_dir / "CMakeLists.txt").write_text(
+        'idf_component_register(SRCS "fake.c"\n'
+        '                       INCLUDE_DIRS "include")\n'
+    )
+    # Stub idf.py so the wrap-script generates CMakeLists without
+    # actually invoking a real build.
+    stub_idf = tmp_path / "idf" / "tools" / "idf.py"
+    stub_idf.parent.mkdir(parents=True)
+    stub_idf.write_text("#!/usr/bin/env bash\nexit 0\n")
+    stub_idf.chmod(0o755)
+    env = os.environ.copy()
+    env["IDF_PATH"] = str(tmp_path / "idf")
+    env["PATH"] = f"{stub_idf.parent}:{env.get('PATH','')}"
+    env["BUILD_DIR"] = str(sample / "build_qemu")
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, (
+        f"build-stock-sample.sh failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
+    )
+    wrap_cmake = sample / "_qemu_wrap_fake_sample" / "main" / "CMakeLists.txt"
+    assert wrap_cmake.is_file(), "wrap main CMakeLists.txt not generated"
+    body = wrap_cmake.read_text()
+    expected_inc = str(main_dir / "include")
+    assert expected_inc in body, (
+        f"FB-028: wrap CMakeLists missing absolute INCLUDE_DIRS subdir.\n"
+        f"Expected '{expected_inc}' in:\n{body}"
     )
 
 
