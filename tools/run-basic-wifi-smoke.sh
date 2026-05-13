@@ -163,6 +163,11 @@ SAMPLES=(
     "ota_advanced_https|${IDF_PATH}/examples/system/ota/advanced_https_ota|station|build_only"
     "ota_native|${IDF_PATH}/examples/system/ota/native_ota_example|station|build_only"
     "ota_simple|${IDF_PATH}/examples/system/ota/simple_ota_example|station|build_only"
+    # Day-57 FB-029 — project-level target_add_binary_data propagation + cert-bundle data dir.
+    "mqtt_ssl|${IDF_PATH}/examples/protocols/mqtt/ssl|station|build_only"
+    "mqtt_wss|${IDF_PATH}/examples/protocols/mqtt/wss|station|build_only"
+    "mqtt_ssl_mutual_auth|${IDF_PATH}/examples/protocols/mqtt/ssl_mutual_auth|station|build_only"
+    "https_x509_bundle|${IDF_PATH}/examples/protocols/https_x509_bundle|station|build_only"
 )
 
 PASS=0

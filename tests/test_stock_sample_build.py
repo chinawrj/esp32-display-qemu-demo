@@ -571,6 +571,70 @@ def test_build_stock_sample_symlinks_sample_root_data_dirs(tmp_path):
     )
 
 
+def test_basic_wifi_smoke_includes_day57_fb029_samples():
+    """Day-57: FB-029 unlocked mqtt_ssl, mqtt_wss, mqtt_ssl_mutual_auth, and
+    https_x509_bundle.  All four must appear in the smoke gate as
+    build_only entries.
+    """
+    script = PROJECT_ROOT / "tools" / "run-basic-wifi-smoke.sh"
+    text = script.read_text()
+    for name in (
+        "mqtt_ssl",
+        "mqtt_wss",
+        "mqtt_ssl_mutual_auth",
+        "https_x509_bundle",
+    ):
+        assert f'"{name}|' in text, (
+            f"Day-57: smoke gate missing {name} build_only entry"
+        )
+
+
+def test_build_stock_sample_propagates_project_target_add_binary_data(tmp_path):
+    """Day-57 FB-029: project-level target_add_binary_data() calls in the
+    stock sample's top-level CMakeLists.txt must be re-emitted in the
+    wrap's CMakeLists.txt, with any relative path argument rewritten to
+    an absolute path under SAMPLE_DIR.
+    """
+    sample = tmp_path / "tab_sample"
+    main_dir = sample / "main"
+    main_dir.mkdir(parents=True)
+    (main_dir / "cert.pem").write_text("-----BEGIN-----\n")
+    (main_dir / "fake.c").write_text("/* fake */\n")
+    (sample / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        "project(tab_sample)\n"
+        'target_add_binary_data(tab_sample.elf "main/cert.pem" TEXT)\n'
+    )
+    (main_dir / "CMakeLists.txt").write_text(
+        'idf_component_register(SRCS "fake.c" INCLUDE_DIRS ".")\n'
+    )
+    stub_idf = tmp_path / "idf" / "tools" / "idf.py"
+    stub_idf.parent.mkdir(parents=True)
+    stub_idf.write_text("#!/usr/bin/env bash\nexit 0\n")
+    stub_idf.chmod(0o755)
+    env = os.environ.copy()
+    env["IDF_PATH"] = str(tmp_path / "idf")
+    env["PATH"] = f"{stub_idf.parent}:{env.get('PATH','')}"
+    env["BUILD_DIR"] = str(sample / "build_qemu")
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"build-stock-sample.sh failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
+    )
+    wrap_cmake = (sample / "_qemu_wrap_tab_sample" / "CMakeLists.txt").read_text()
+    abs_path = str(sample / "main" / "cert.pem")
+    assert "target_add_binary_data" in wrap_cmake, (
+        f"Day-57 FB-029: target_add_binary_data missing from wrap CMakeLists:\n{wrap_cmake}"
+    )
+    assert abs_path in wrap_cmake, (
+        f"Day-57 FB-029: relative path not rewritten to absolute path under SAMPLE_DIR.\n"
+        f"Expected substring: {abs_path}\nActual:\n{wrap_cmake}"
+    )
+
+
 def test_basic_wifi_smoke_includes_day53_eap_build_only_entries():
     """Day-53: wifi_eap_fast and wifi_enterprise are the last two stock
     ESP-IDF Wi-Fi samples.  Both require EMBED_TXTFILES to bake TLS

@@ -145,6 +145,34 @@ include(\$ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(${SAMPLE_PROJ_NAME})
 WRAP_EOF
 
+# Day-57 FB-029: re-emit project-level target_add_binary_data() calls from
+# the stock sample's top-level CMakeLists.txt.  Paths in these calls resolve
+# relative to PROJECT_DIR (now the wrap dir), so we rewrite any relative
+# path argument to an absolute path under ${SAMPLE_DIR}.
+SAMPLE_TOP_CMAKE="${SAMPLE_DIR}/CMakeLists.txt"
+if [ -f "$SAMPLE_TOP_CMAKE" ] && grep -qE '^[[:space:]]*target_add_binary_data[[:space:]]*\(' "$SAMPLE_TOP_CMAKE"; then
+    {
+        echo ""
+        echo "# Day-57 FB-029: propagated from stock sample's project CMakeLists.txt"
+        grep -E '^[[:space:]]*target_add_binary_data[[:space:]]*\(' "$SAMPLE_TOP_CMAKE" \
+        | awk -v sdir="$SAMPLE_DIR" '
+            {
+                # Rewrite the first double-quoted argument from a relative
+                # path into an absolute path under SAMPLE_DIR.  Absolute
+                # paths and CMake variable refs pass through unchanged.
+                n = index($0, "\"")
+                if (n == 0) { print; next }
+                tail = substr($0, n+1)
+                m = index(tail, "\"")
+                if (m == 0) { print; next }
+                path = substr(tail, 1, m-1)
+                if (substr(path,1,1) == "/" || index(path, "${") > 0) { print; next }
+                print substr($0, 1, n) sdir "/" path substr(tail, m)
+            }
+        '
+    } >> "${WRAP_DIR}/CMakeLists.txt"
+fi
+
 # ── Symlink sample-root assets that sdkconfig may reference by relative
 #    path (custom partition CSVs, etc.).  The wrapper IS the project root
 #    from CMake's perspective, so anything resolved via

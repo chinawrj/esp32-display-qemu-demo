@@ -56,6 +56,10 @@ console UART input).
 | `examples/system/ota/simple_ota_example/` | OTA upgrade with embedded CA cert and custom mbedtls cert bundle — Day 56 (needs `${project_dir}` rewrite + `server_certs/` symlinking) |
 | `examples/system/ota/advanced_https_ota/` | esp_https_ota with chunked download + image rollback — Day 56 |
 | `examples/system/ota/native_ota_example/` | esp_ota_* native API over HTTPS — Day 56 |
+| `examples/protocols/mqtt/ssl/` | esp_mqtt_client over TLS with project-level `target_add_binary_data` cert — Day 57 (FB-029) |
+| `examples/protocols/mqtt/wss/` | esp_mqtt_client over WebSocket+TLS with project-level cert — Day 57 (FB-029) |
+| `examples/protocols/mqtt/ssl_mutual_auth/` | esp_mqtt_client with mutual TLS (client cert+key + server cert) — Day 57 (FB-029, multi-asset `target_add_binary_data`) |
+| `examples/protocols/https_x509_bundle/` | Custom mbedtls certificate bundle resolved via sdkconfig `CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH="certs"` — Day 57 (via Day-56 sample-root data-dir symlinking) |
 
 ### Day 56 — probe-configure helper unlocks `${var}` expansion and implicit-all `main`
 
@@ -118,10 +122,47 @@ Pinned by three regression tests in `tests/test_stock_sample_build.py`:
 and `test_build_stock_sample_symlinks_sample_root_data_dirs`.
 
 Remaining deferred:
-- `protocols/mqtt/ssl`, `protocols/mqtt/wss`, `protocols/https_x509_bundle`
-  — use `target_add_binary_data(target ...)` at the **project**
-  CMakeLists.txt level (not inside `idf_component_register`), which
-  the wrap script does not propagate.  Still tracked as FB-029.
+- `protocols/mqtt/ssl_ds` — requires the Digital Signature
+  peripheral (`esp_secure_cert_mgr`) which is hardware-only;
+  not in scope for QEMU.
+
+### Day 57 — project-level `target_add_binary_data` propagation (FB-029)
+
+Day 57 closes FB-029 and takes total stock-sample coverage from
+**32 to 36**.  Stock TLS-bearing samples in `protocols/mqtt/**`
+wire their cert assets at the *project* CMakeLists.txt level via
+`target_add_binary_data(<proj>.elf "main/<cert>.pem" TEXT)` rather
+than inside `idf_component_register(... EMBED_TXTFILES ...)`.
+The Day-54..56 wrap script only inspected `main/CMakeLists.txt`,
+so the `_binary_<name>_start` symbol the source references was
+never produced and link failed.
+
+`tools/build-stock-sample.sh` now scans the stock sample's
+top-level `CMakeLists.txt` for `target_add_binary_data(...)`
+lines and re-emits them in the wrap's CMakeLists.txt after the
+`project(...)` line.  The first double-quoted argument (the
+asset path) is rewritten from a relative path into an absolute
+path under `${SAMPLE_DIR}`; CMake-variable refs (e.g.
+`${CMAKE_PROJECT_NAME}.elf`) and already-absolute paths pass
+through unchanged.  Since the wrap reuses
+`project(${SAMPLE_PROJ_NAME})`, hardcoded `<proj>.elf` target
+names resolve to the same elf in the wrap — no target rewrite
+needed.
+
+Combined with Day-56's sample-root data-dir symlinking (which
+alone unblocks `https_x509_bundle`'s sdkconfig-relative `certs/`
+lookup), four more samples join the basic-wifi smoke gate:
+
+- `protocols/mqtt/ssl` — single TLS cert via `target_add_binary_data`
+- `protocols/mqtt/wss` — single TLS cert (WebSocket+TLS transport)
+- `protocols/mqtt/ssl_mutual_auth` — three assets propagated
+  (`client.crt`, `client.key`, `mosquitto.org.crt`)
+- `protocols/https_x509_bundle` — custom mbedtls certificate
+  bundle resolved via `CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH="certs"`
+
+Pinned by two regression tests in `tests/test_stock_sample_build.py`:
+`test_build_stock_sample_propagates_project_target_add_binary_data`
+and `test_basic_wifi_smoke_includes_day57_fb029_samples`.
 
 ### Day 55 — drop-in coverage advances further into `examples/protocols/**`
 

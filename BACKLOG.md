@@ -138,6 +138,25 @@ A given sample is "supported" when:
     - `system/ota/simple_ota_example`, `system/ota/advanced_https_ota`,
       `system/ota/native_ota_example`
   Total stock-sample coverage: 23 → **32**.  FB-027 resolved.
+- Day 57 — project-level `target_add_binary_data()` propagation
+  closes FB-029.  `tools/build-stock-sample.sh` now scans the
+  stock sample's top-level CMakeLists.txt for
+  `target_add_binary_data(<target> "<path>" <TEXT|BINARY>)` calls
+  and re-emits them in the wrap's CMakeLists.txt after the
+  `project(...)` line.  Relative path arguments are rewritten to
+  absolute paths under `${SAMPLE_DIR}` (CMake-variable refs and
+  already-absolute paths pass through unchanged).  Combined with
+  Day-56's sample-root data-dir symlinking (which alone unblocks
+  `https_x509_bundle`'s `certs/` lookup), four more samples join
+  the basic-wifi smoke gate as build_only entries:
+    - `protocols/mqtt/ssl`, `protocols/mqtt/wss`,
+      `protocols/mqtt/ssl_mutual_auth` (project-level
+      `target_add_binary_data` with embedded TLS certs)
+    - `protocols/https_x509_bundle` (custom certificate bundle
+      resolved via sdkconfig path relative to PROJECT_DIR)
+  Total stock-sample coverage: 32 → **36**.  FB-029 resolved.
+  (`protocols/mqtt/ssl_ds` remains out of scope: needs the
+  Digital Signature peripheral driver, which is hardware-only.)
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)
