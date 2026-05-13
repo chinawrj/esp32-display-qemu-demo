@@ -200,6 +200,21 @@ SAMPLES=(
     "wifi_iperf|${IDF_PATH}/examples/wifi/iperf|station|build_only"
     "wifi_dpp_enrollee|${IDF_PATH}/examples/wifi/wifi_easy_connect/dpp-enrollee|station|build_only"
     "ota_otatool|${IDF_PATH}/examples/system/ota/otatool|station|build_only"
+    # Day-59 (FB-032) — gate protocol_examples_common injection on actual
+    # source-level use so that samples pulling `ethernet_init` via
+    # idf_component.yml stop colliding on duplicated EXAMPLE_USE_* Kconfig
+    # symbols.  Unblocks the entire examples/network/* tree (modulo
+    # sta2eth which still needs the tinyusb hardware-only stack).
+    "net_simple_sniffer|${IDF_PATH}/examples/network/simple_sniffer|station|build_only"
+    "net_bridge|${IDF_PATH}/examples/network/bridge|station|build_only"
+    "net_vlan_support|${IDF_PATH}/examples/network/vlan_support|station|build_only"
+    "net_eth2ap|${IDF_PATH}/examples/network/eth2ap|station|build_only"
+    # Day-59 — additional drop-in coverage that just needed to be tried
+    "http_server_advanced_tests|${IDF_PATH}/examples/protocols/http_server/advanced_tests|station|build_only"
+    "wifi_roaming_11kvr|${IDF_PATH}/examples/wifi/roaming/roaming_11kvr|station|build_only"
+    "wifi_aware_nan_console|${IDF_PATH}/examples/wifi/wifi_aware/nan_console|station|build_only"
+    "wifi_aware_nan_publisher|${IDF_PATH}/examples/wifi/wifi_aware/nan_publisher|station|build_only"
+    "wifi_aware_nan_subscriber|${IDF_PATH}/examples/wifi/wifi_aware/nan_subscriber|station|build_only"
 )
 
 PASS=0

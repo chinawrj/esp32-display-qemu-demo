@@ -67,9 +67,18 @@ TARGET="${TARGET:-esp32}"
 BUILD_DIR="${BUILD_DIR:-${SAMPLE_DIR}/build_qemu}"
 
 EXTRA_COMPONENT_DIRS="${QEMU_WIFI_DIR}/components"
-# Expose protocol_examples_common specifically (not the whole common_components dir,
-# because some siblings like protocol_examples_tapif_io are linux-only and error on esp32).
-EXTRA_COMPONENT_DIRS="${EXTRA_COMPONENT_DIRS};${IDF_PATH}/examples/common_components/protocol_examples_common"
+# Day-59 (FB-032): only expose protocol_examples_common when the sample's
+# main/ actually references it. Forcing it in unconditionally collides with
+# samples that pull `ethernet_init` via idf_component.yml, because both
+# components redefine the same EXAMPLE_USE_* Kconfig symbols, causing
+# kconfgen to fail with choice-symbol conflicts (network/simple_sniffer,
+# network/sta2eth, network/bridge, network/vlan_support).
+SAMPLE_MAIN_DIR_PROBE="${SAMPLE_DIR}/main"
+if [ -d "${SAMPLE_MAIN_DIR_PROBE}" ] && \
+   grep -rqE 'protocol_examples_common|example_connect|example_disconnect|example_configure_stdin_stdout' \
+       "${SAMPLE_MAIN_DIR_PROBE}" 2>/dev/null; then
+    EXTRA_COMPONENT_DIRS="${EXTRA_COMPONENT_DIRS};${IDF_PATH}/examples/common_components/protocol_examples_common"
+fi
 QEMU_SDKCONFIG="${QEMU_WIFI_DIR}/sdkconfig.qemu.wifi.defaults"
 
 # Detect if sample already has a sdkconfig.defaults

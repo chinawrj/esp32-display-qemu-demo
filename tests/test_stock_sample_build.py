@@ -719,6 +719,52 @@ def test_build_stock_sample_substitutes_cmake_current_source_dir(tmp_path):
     )
 
 
+def test_basic_wifi_smoke_includes_day59_fb032_samples():
+    """Day-59: FB-032 gates protocol_examples_common injection on actual
+    source-level use, unblocking samples that pull `ethernet_init` via
+    idf_component.yml (whose Kconfig duplicates EXAMPLE_USE_* symbols).
+    The 4 network/* + 5 additional samples must appear in the smoke gate.
+    """
+    script = PROJECT_ROOT / "tools" / "run-basic-wifi-smoke.sh"
+    text = script.read_text()
+    for name in (
+        "net_simple_sniffer",
+        "net_bridge",
+        "net_vlan_support",
+        "net_eth2ap",
+        "http_server_advanced_tests",
+        "wifi_roaming_11kvr",
+        "wifi_aware_nan_console",
+        "wifi_aware_nan_publisher",
+        "wifi_aware_nan_subscriber",
+    ):
+        assert f'"{name}|' in text, (
+            f"Day-59: smoke gate missing {name} build_only entry"
+        )
+
+
+def test_build_stock_sample_gates_protocol_examples_common_injection(tmp_path):
+    """Day-59 FB-032: build-stock-sample.sh must NOT inject the
+    common_components/protocol_examples_common directory into
+    EXTRA_COMPONENT_DIRS for samples whose main/ never references
+    protocol_examples_common (or its `example_connect` API).  Forcing
+    it in unconditionally collides with samples that pull `ethernet_init`
+    via idf_component.yml — both components redefine the same
+    EXAMPLE_USE_* Kconfig symbols and kconfgen fails on choice-symbol
+    duplicates.  This regression-protects the conditional injection.
+    """
+    script = PROJECT_ROOT / "tools" / "build-stock-sample.sh"
+    text = script.read_text()
+    assert "FB-032" in text, "Day-59 FB-032 marker missing from build-stock-sample.sh"
+    # The gating predicate must check the sample's main/ for actual use.
+    assert "protocol_examples_common|example_connect" in text or \
+           "example_connect" in text, (
+               "Day-59 FB-032: build-stock-sample.sh must gate "
+               "protocol_examples_common injection on source-level use "
+               "(grep for protocol_examples_common / example_connect in main/)."
+           )
+
+
 def test_build_stock_sample_propagates_project_target_add_binary_data(tmp_path):
     """Day-57 FB-029: project-level target_add_binary_data() calls in the
     stock sample's top-level CMakeLists.txt must be re-emitted in the

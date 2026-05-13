@@ -194,6 +194,25 @@ A given sample is "supported" when:
   resolved.  Pure drop-in: zero `.c`/`.h` source diff to any of
   the 65 stock samples — only `CMakeLists.txt` + `sdkconfig`
   overlay via the wrap script.
+- Day 59 — FB-032 (conditional `protocol_examples_common` injection)
+  takes the smoke gate from 65 to **74**.  The wrap script was
+  unconditionally adding `examples/common_components/protocol_examples_common`
+  to `EXTRA_COMPONENT_DIRS`, which collided at kconfgen with samples
+  whose `idf_component.yml` pulls `examples/ethernet/basic/components/ethernet_init`
+  — both components redefine the same `EXAMPLE_USE_*` Kconfig
+  symbols, causing a fatal choice-symbol mismatch.  The fix gates
+  the injection on `grep -rqE 'protocol_examples_common|example_connect|
+  example_disconnect|example_configure_stdin_stdout' ${SAMPLE_DIR}/main/`
+  — samples that bring their own connection logic (ethernet_init,
+  manual provisioning, etc.) no longer pollute the Kconfig namespace.
+  9 additional build_only entries join the smoke gate: 4 from
+  `examples/network/*` (`simple_sniffer`, `bridge`, `vlan_support`,
+  `eth2ap`), plus 5 opportunistic additions
+  (`protocols/http_server/advanced_tests`, `wifi/roaming/roaming_11kvr`,
+  `wifi/wifi_aware/nan_console`, `wifi/wifi_aware/nan_publisher`,
+  `wifi/wifi_aware/nan_subscriber`).  Total stock-sample coverage:
+  65 → **74**.  FB-032 resolved.  Still deferred: `network/sta2eth`
+  (needs `tinyusb` USB-peripheral stack — hardware-only).
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

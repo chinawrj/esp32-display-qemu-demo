@@ -89,6 +89,45 @@ console UART input).
 | `examples/wifi/iperf/` | iperf2/3-compatible throughput tool — Day 58 |
 | `examples/wifi/wifi_easy_connect/dpp-enrollee/` | Wi-Fi Easy Connect (DPP) enrollee — Day 58 |
 | `examples/system/ota/otatool/` | otatool partition manipulation example — Day 58 |
+| `examples/network/simple_sniffer/` | Wi-Fi promisc/Ethernet sniffer with pcap export — Day 59 |
+| `examples/network/bridge/` | LWIP L2 bridge over wired+wireless — Day 59 |
+| `examples/network/vlan_support/` | 802.1Q VLAN tagging demo — Day 59 |
+| `examples/network/eth2ap/` | Ethernet ↔ Wi-Fi SoftAP NAT/bridge — Day 59 |
+| `examples/protocols/http_server/advanced_tests/` | Advanced HTTPD test harness — Day 59 |
+| `examples/wifi/roaming/roaming_11kvr/` | 802.11k/v/r roaming companion to roaming_app — Day 59 |
+| `examples/wifi/wifi_aware/nan_console/` | Wi-Fi Aware (NAN) interactive console — Day 59 |
+| `examples/wifi/wifi_aware/nan_publisher/` | Wi-Fi Aware (NAN) publisher — Day 59 |
+| `examples/wifi/wifi_aware/nan_subscriber/` | Wi-Fi Aware (NAN) subscriber — Day 59 |
+
+### Day 59 — conditional `protocol_examples_common` injection (FB-032)
+
+Day 59 lands a single but high-leverage wrap-script fix and
+takes total stock-sample coverage from **65 to 74** — pure
+drop-in (zero `.c`/`.h` source diff to any of the 74 samples).
+
+**FB-032 — conditional `protocol_examples_common` injection.**
+The wrap script was unconditionally appending
+`examples/common_components/protocol_examples_common` to
+`EXTRA_COMPONENT_DIRS`.  This was fine for samples that
+actually `#include "protocol_examples_common.h"` or call
+`example_connect()`, but for samples whose `idf_component.yml`
+pulls `examples/ethernet/basic/components/ethernet_init`, both
+components redefine the same `EXAMPLE_USE_INTERNAL_ETHERNET` /
+`EXAMPLE_USE_SPI_ETHERNET` / `EXAMPLE_USE_DM9051` /
+`EXAMPLE_USE_W5500` Kconfig symbols.  kconfgen treats the
+choice-symbol collision as fatal — blocking the entire
+`examples/network/*` tree.
+
+The fix gates the injection on
+`grep -rqE 'protocol_examples_common|example_connect|example_disconnect|example_configure_stdin_stdout' ${SAMPLE_DIR}/main/`.
+Samples that bring their own connection logic no longer pollute
+the Kconfig namespace, while everything that used the helper
+before still gets it.  Pinned by
+`test_build_stock_sample_gates_protocol_examples_common_injection`.
+
+Still deferred:
+- `examples/network/sta2eth` — needs `tinyusb` USB-peripheral
+  stack (hardware-only — no QEMU emulation).
 
 ### Day 58 — sample-root `components/` discovery (FB-030) + generalized post-`project()` propagation (FB-031)
 
