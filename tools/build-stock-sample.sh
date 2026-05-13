@@ -155,6 +155,18 @@ for asset in "${SAMPLE_DIR}"/partitions*.csv "${SAMPLE_DIR}"/*.csv; do
     name="$(basename "$asset")"
     ln -sf "$asset" "${WRAP_DIR}/${name}"
 done
+# Day-56: symlink sample-root data subdirectories that sdkconfig keys
+# may resolve relative to PROJECT_DIR (e.g. CONFIG_MBEDTLS_CUSTOM_CERTI-
+# FICATE_BUNDLE_PATH="server_certs/ca_cert.pem" in system/ota/simple_ota_
+# example).  We skip well-known build/component dirs to avoid recursing
+# back into the wrap.
+for dir in "${SAMPLE_DIR}"/*/; do
+    name="$(basename "$dir")"
+    case "$name" in
+        main|build|build_*|_qemu_wrap_*|managed_components|components|test|tests) continue ;;
+    esac
+    ln -sfn "$dir" "${WRAP_DIR}/${name}"
+done
 shopt -u nullglob
 
 # ── Generate wrapper main/CMakeLists.txt ─────────────────────────────────
@@ -249,6 +261,104 @@ if [ -f "$SAMPLE_CMAKE" ]; then
     SAMPLE_INCLUDE_DIRS="$(extract_requires_kw INCLUDE_DIRS "$SAMPLE_CMAKE")"
 fi
 
+# ── Day-56 (FB-027): probe-configure the unmodified sample with `idf.py
+#    reconfigure` and read project_description.json to obtain the
+#    authoritative resolved list of main's REQUIRES / PRIV_REQUIRES.
+#    This handles cases the textual awk extract cannot:
+#      • `${var}` references in PRIV_REQUIRES (e.g. esp_http_client uses
+#        `set(requires …); list(APPEND requires …); PRIV_REQUIRES ${requires}`)
+#      • managed-component dependencies declared only in
+#        main/idf_component.yml (e.g. icmp_echo, smtp_client)
+#      • main's special transitive priv-reqs treatment that exposes a
+#        dep's own priv_reqs to main's compile units (e.g. icmp_echo's
+#        main pulls `console` headers transitively through
+#        protocol_examples_common)
+#    The probe is cached on a content hash of main/CMakeLists.txt +
+#    main/idf_component.yml so repeated builds skip it.  If the probe
+#    fails (e.g. stubbed idf.py in unit tests, no IDF on PATH), we fall
+#    back silently to the textual extract — keeping existing behaviour
+#    intact.
+PROBE_DIR="${WRAP_DIR}/.probe"
+PROBE_CACHE="${WRAP_DIR}/.probe_reqs.cache"
+PROBE_HASH_INPUTS="${SAMPLE_CMAKE}"
+[ -f "${SAMPLE_MAIN_DIR}/idf_component.yml" ] && \
+    PROBE_HASH_INPUTS="${PROBE_HASH_INPUTS} ${SAMPLE_MAIN_DIR}/idf_component.yml"
+PROBE_HASH=$(cat $PROBE_HASH_INPUTS 2>/dev/null | sha1sum | awk '{print $1}')
+
+PROBED_REQUIRES=""
+PROBED_PRIV_REQUIRES=""
+PROBED_BUILD_COMPONENTS=""
+PROBE_USED=0
+if [ -f "${PROBE_CACHE}" ]; then
+    CACHED_HASH="$(sed -n '1p' "${PROBE_CACHE}" 2>/dev/null || true)"
+    if [ "${CACHED_HASH}" = "${PROBE_HASH}" ]; then
+        PROBED_REQUIRES="$(sed -n '2p' "${PROBE_CACHE}" 2>/dev/null || true)"
+        PROBED_PRIV_REQUIRES="$(sed -n '3p' "${PROBE_CACHE}" 2>/dev/null || true)"
+        PROBED_BUILD_COMPONENTS="$(sed -n '4p' "${PROBE_CACHE}" 2>/dev/null || true)"
+        PROBE_USED=1
+    fi
+fi
+
+if [ "${PROBE_USED}" -eq 0 ] && command -v idf.py >/dev/null 2>&1; then
+    echo "[build-stock-sample] probing sample deps via idf.py reconfigure …"
+    rm -rf "${PROBE_DIR}"
+    if idf.py -C "${SAMPLE_DIR}" -B "${PROBE_DIR}" \
+            -DIDF_TARGET="${TARGET}" reconfigure >/dev/null 2>&1 \
+       && [ -f "${PROBE_DIR}/project_description.json" ]; then
+        PROBE_OUT="$(python3 - "${PROBE_DIR}/project_description.json" <<'PY' || true
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    m = d.get("build_component_info", {}).get("main", {})
+    print(" ".join(m.get("reqs", []) or []))
+    print(" ".join(m.get("priv_reqs", []) or []))
+    # Day-56: if the sample's main has no explicit REQUIRES/PRIV_REQUIRES,
+    # ESP-IDF treats main as implicitly requiring ALL components.  Once
+    # our wrap registers a non-empty REQUIRES list (we always add
+    # esp_wifi_qemu), that implicit-all behaviour is lost.  Emit the
+    # full build_components list as a third line so the bash side can
+    # decide whether to fall back to it.
+    bc = [c for c in (d.get("build_components") or []) if c and c != "main"]
+    print(" ".join(bc))
+except Exception:
+    pass
+PY
+)"
+        if [ -n "${PROBE_OUT}" ]; then
+            PROBED_REQUIRES="$(printf '%s\n' "${PROBE_OUT}" | sed -n '1p')"
+            PROBED_PRIV_REQUIRES="$(printf '%s\n' "${PROBE_OUT}" | sed -n '2p')"
+            PROBED_BUILD_COMPONENTS="$(printf '%s\n' "${PROBE_OUT}" | sed -n '3p')"
+            {
+                printf '%s\n' "${PROBE_HASH}"
+                printf '%s\n' "${PROBED_REQUIRES}"
+                printf '%s\n' "${PROBED_PRIV_REQUIRES}"
+                printf '%s\n' "${PROBED_BUILD_COMPONENTS}"
+            } > "${PROBE_CACHE}"
+            PROBE_USED=1
+        fi
+    fi
+    rm -rf "${PROBE_DIR}"
+fi
+
+if [ "${PROBE_USED}" -eq 1 ]; then
+    # Probe wins: it knows about ${var} expansion and managed deps.
+    SAMPLE_REQUIRES="${PROBED_REQUIRES}"
+    SAMPLE_PRIV_REQUIRES="${PROBED_PRIV_REQUIRES}"
+    # Day-56: if the original sample's main/CMakeLists.txt declares
+    # neither REQUIRES nor PRIV_REQUIRES, ESP-IDF grants main implicit
+    # access to every built component.  Reproduce that by widening the
+    # wrap's REQUIRES to the entire build_components list from the
+    # probe.  Examples: icmp_echo (uses esp_console.h via console),
+    # smtp_client (uses mbedtls/platform.h via mbedtls).
+    ORIG_HAS_REQUIRES=0
+    if grep -qE '(^|[^A-Z_])(REQUIRES|PRIV_REQUIRES)[[:space:]]' "$SAMPLE_CMAKE" 2>/dev/null; then
+        ORIG_HAS_REQUIRES=1
+    fi
+    if [ "${ORIG_HAS_REQUIRES}" -eq 0 ] && [ -n "${PROBED_BUILD_COMPONENTS// /}" ]; then
+        SAMPLE_PRIV_REQUIRES="${SAMPLE_PRIV_REQUIRES} ${PROBED_BUILD_COMPONENTS}"
+    fi
+fi
+
 # Merge: base + sample's REQUIRES + sample's PRIV_REQUIRES + esp_wifi_qemu
 # Note: we promote the sample's PRIV_REQUIRES into REQUIRES so that
 # esp_wifi_qemu's INTERFACE link options (--whole-archive) propagate
@@ -304,14 +414,31 @@ DEDUPED_REQUIRES="$(printf '%s\n' $MERGED_REQUIRES | awk '!seen[$0]++' | tr '\n'
         echo "    EMBED_FILES"
         for f in $SAMPLE_EMBED_FILES; do
             [ -z "$f" ] && continue
-            echo "        \"${SAMPLE_MAIN_DIR}/${f}\""
+            # Day-56: resolve common CMake variables relative to the
+            # sample so EMBED_TXTFILES ${project_dir}/certs/foo.pem
+            # (e.g. system/ota/*) lands on the correct absolute path.
+            f="${f//\$\{project_dir\}/${SAMPLE_DIR}}"
+            f="${f//\$\{PROJECT_DIR\}/${SAMPLE_DIR}}"
+            f="${f//\$\{CMAKE_CURRENT_LIST_DIR\}/${SAMPLE_MAIN_DIR}}"
+            f="${f//\$\{CMAKE_CURRENT_SOURCE_DIR\}/${SAMPLE_MAIN_DIR}}"
+            case "$f" in
+                /*) echo "        \"${f}\"" ;;
+                *)  echo "        \"${SAMPLE_MAIN_DIR}/${f}\"" ;;
+            esac
         done
     fi
     if [ -n "${SAMPLE_EMBED_TXTFILES// /}" ]; then
         echo "    EMBED_TXTFILES"
         for f in $SAMPLE_EMBED_TXTFILES; do
             [ -z "$f" ] && continue
-            echo "        \"${SAMPLE_MAIN_DIR}/${f}\""
+            f="${f//\$\{project_dir\}/${SAMPLE_DIR}}"
+            f="${f//\$\{PROJECT_DIR\}/${SAMPLE_DIR}}"
+            f="${f//\$\{CMAKE_CURRENT_LIST_DIR\}/${SAMPLE_MAIN_DIR}}"
+            f="${f//\$\{CMAKE_CURRENT_SOURCE_DIR\}/${SAMPLE_MAIN_DIR}}"
+            case "$f" in
+                /*) echo "        \"${f}\"" ;;
+                *)  echo "        \"${SAMPLE_MAIN_DIR}/${f}\"" ;;
+            esac
         done
     fi
     echo "    REQUIRES ${DEDUPED_REQUIRES}"

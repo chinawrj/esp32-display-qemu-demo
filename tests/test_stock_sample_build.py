@@ -437,6 +437,140 @@ def test_build_stock_sample_propagates_include_dirs_subdirs(tmp_path):
     )
 
 
+def test_basic_wifi_smoke_includes_day56_protocol_samples():
+    """Day-56 (FB-027) lands a probe-configure helper that runs
+    `idf.py reconfigure` on the unmodified sample and reads
+    project_description.json to obtain main's authoritative resolved
+    REQUIRES / PRIV_REQUIRES.  This unlocks samples whose
+    main/CMakeLists.txt would defeat textual extraction:
+
+      • esp_http_client — uses `${requires}` with `list(APPEND)`
+      • icmp_echo, smtp_client — declare no REQUIRES; rely on
+        ESP-IDF's implicit-all-components rule for main (the wrap
+        widens REQUIRES to the probed build_components list)
+      • https_server/{simple,wss_server}, modbus/serial/mb_master —
+        previously failed for similar reasons; cleared by probe
+      • system/ota/{simple,advanced_https,native}_ota_example —
+        unlocked by `${project_dir}` substitution in EMBED_TXTFILES
+        plus sample-root data-dir symlinking (server_certs/) into
+        the wrap project root.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    for entry in (
+        "esp_http_client|${IDF_PATH}/examples/protocols/esp_http_client|station|build_only",
+        "icmp_echo|${IDF_PATH}/examples/protocols/icmp_echo|station|build_only",
+        "smtp_client|${IDF_PATH}/examples/protocols/smtp_client|station|build_only",
+        "https_server_simple|${IDF_PATH}/examples/protocols/https_server/simple|station|build_only",
+        "https_server_wss|${IDF_PATH}/examples/protocols/https_server/wss_server|station|build_only",
+        "modbus_mb_master|${IDF_PATH}/examples/protocols/modbus/serial/mb_master|station|build_only",
+        "ota_advanced_https|${IDF_PATH}/examples/system/ota/advanced_https_ota|station|build_only",
+        "ota_native|${IDF_PATH}/examples/system/ota/native_ota_example|station|build_only",
+        "ota_simple|${IDF_PATH}/examples/system/ota/simple_ota_example|station|build_only",
+    ):
+        assert entry in script, f"Day-56 protocol-sample smoke entry missing: {entry!r}"
+
+
+def test_build_stock_sample_resolves_project_dir_in_embed_txtfiles(tmp_path):
+    """Day-56: EMBED_FILES / EMBED_TXTFILES tokens of the form
+    `${project_dir}/foo.pem` (used by system/ota/* samples) must be
+    rewritten to absolute paths under SAMPLE_DIR (not SAMPLE_MAIN_DIR)
+    when the wrap CMakeLists is generated.  Without this, the wrap
+    main register call would emit
+    `${SAMPLE_MAIN_DIR}/${project_dir}/foo.pem`, which CMake then
+    expands to a non-existent path inside the wrap dir itself.
+    """
+    sample = tmp_path / "ota_like"
+    main_dir = sample / "main"
+    main_dir.mkdir(parents=True)
+    (sample / "server_certs").mkdir()
+    (sample / "server_certs" / "ca_cert.pem").write_text("dummy cert\n")
+    (main_dir / "fake.c").write_text("/* fake */\n")
+    (sample / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        "project(ota_like)\n"
+    )
+    (main_dir / "CMakeLists.txt").write_text(
+        "idf_build_get_property(project_dir PROJECT_DIR)\n"
+        'idf_component_register(SRCS "fake.c"\n'
+        '                       INCLUDE_DIRS "."\n'
+        '                       PRIV_REQUIRES esp_netif\n'
+        '                       EMBED_TXTFILES ${project_dir}/server_certs/ca_cert.pem)\n'
+    )
+    stub_idf = tmp_path / "idf" / "tools" / "idf.py"
+    stub_idf.parent.mkdir(parents=True)
+    stub_idf.write_text("#!/usr/bin/env bash\nexit 0\n")
+    stub_idf.chmod(0o755)
+    env = os.environ.copy()
+    env["IDF_PATH"] = str(tmp_path / "idf")
+    env["PATH"] = f"{stub_idf.parent}:{env.get('PATH','')}"
+    env["BUILD_DIR"] = str(sample / "build_qemu")
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"build-stock-sample.sh failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
+    )
+    wrap_cmake = sample / "_qemu_wrap_ota_like" / "main" / "CMakeLists.txt"
+    assert wrap_cmake.is_file(), "wrap main CMakeLists.txt not generated"
+    body = wrap_cmake.read_text()
+    expected_abs = str(sample / "server_certs" / "ca_cert.pem")
+    assert expected_abs in body, (
+        f"Day-56: EMBED_TXTFILES ${{project_dir}} not rewritten to absolute SAMPLE_DIR path.\n"
+        f"Expected '{expected_abs}' in:\n{body}"
+    )
+    # And the unresolved literal must NOT appear.
+    assert "${project_dir}" not in body, (
+        f"Day-56: literal ${{project_dir}} still present in wrap CMakeLists:\n{body}"
+    )
+
+
+def test_build_stock_sample_symlinks_sample_root_data_dirs(tmp_path):
+    """Day-56: sdkconfig keys can resolve paths relative to PROJECT_DIR
+    (e.g. CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH).  Because the
+    wrap is the project root from CMake's perspective, sample-root data
+    dirs (server_certs/, etc.) must be symlinked into the wrap dir.
+    """
+    sample = tmp_path / "data_dir_sample"
+    main_dir = sample / "main"
+    main_dir.mkdir(parents=True)
+    (sample / "server_certs").mkdir()
+    (sample / "server_certs" / "ca_cert.pem").write_text("dummy\n")
+    (main_dir / "fake.c").write_text("/* fake */\n")
+    (sample / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        "project(data_dir_sample)\n"
+    )
+    (main_dir / "CMakeLists.txt").write_text(
+        'idf_component_register(SRCS "fake.c" INCLUDE_DIRS ".")\n'
+    )
+    stub_idf = tmp_path / "idf" / "tools" / "idf.py"
+    stub_idf.parent.mkdir(parents=True)
+    stub_idf.write_text("#!/usr/bin/env bash\nexit 0\n")
+    stub_idf.chmod(0o755)
+    env = os.environ.copy()
+    env["IDF_PATH"] = str(tmp_path / "idf")
+    env["PATH"] = f"{stub_idf.parent}:{env.get('PATH','')}"
+    env["BUILD_DIR"] = str(sample / "build_qemu")
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"build-stock-sample.sh failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
+    )
+    wrap_link = sample / "_qemu_wrap_data_dir_sample" / "server_certs"
+    assert wrap_link.is_symlink() or wrap_link.is_dir(), (
+        f"Day-56: sample-root data dir not symlinked into wrap dir at {wrap_link}"
+    )
+    # And the linked file must resolve.
+    assert (wrap_link / "ca_cert.pem").is_file(), (
+        f"Day-56: ca_cert.pem unreachable through {wrap_link}"
+    )
+
+
 def test_basic_wifi_smoke_includes_day53_eap_build_only_entries():
     """Day-53: wifi_eap_fast and wifi_enterprise are the last two stock
     ESP-IDF Wi-Fi samples.  Both require EMBED_TXTFILES to bake TLS

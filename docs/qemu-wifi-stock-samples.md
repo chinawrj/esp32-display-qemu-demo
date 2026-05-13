@@ -47,6 +47,81 @@ console UART input).
 | `examples/protocols/sntp/` | LwIP SNTP client over Wi-Fi — Day 54 |
 | `examples/protocols/mqtt/tcp/` | esp_mqtt_client public API end-to-end over plain TCP — Day 55 |
 | `examples/protocols/https_request/` | TLS-secured HTTP GET with embedded CA / server certs — Day 55 (needs FB-028 INCLUDE_DIRS subdir propagation fix) |
+| `examples/protocols/esp_http_client/` | esp_http_client API over plain HTTP + TLS — Day 56 (FB-027 probe-configure) |
+| `examples/protocols/icmp_echo/` | RFC 792 ICMP echo client over Wi-Fi — Day 56 (implicit-all REQUIRES via probe build_components) |
+| `examples/protocols/smtp_client/` | SMTP+TLS client with mbedtls — Day 56 (implicit-all + probe) |
+| `examples/protocols/https_server/simple/` | esp_https_server TLS endpoint — Day 56 |
+| `examples/protocols/https_server/wss_server/` | esp_https_server + WebSocket over TLS — Day 56 |
+| `examples/protocols/modbus/serial/mb_master/` | Modbus master over UART — Day 56 |
+| `examples/system/ota/simple_ota_example/` | OTA upgrade with embedded CA cert and custom mbedtls cert bundle — Day 56 (needs `${project_dir}` rewrite + `server_certs/` symlinking) |
+| `examples/system/ota/advanced_https_ota/` | esp_https_ota with chunked download + image rollback — Day 56 |
+| `examples/system/ota/native_ota_example/` | esp_ota_* native API over HTTPS — Day 56 |
+
+### Day 56 — probe-configure helper unlocks `${var}` expansion and implicit-all `main`
+
+Day 56 lands a probe-configure step in `tools/build-stock-sample.sh`
+and takes total stock-sample coverage from **23 to 32**.  The new
+step runs `idf.py reconfigure` on the unmodified sample, parses
+the generated `project_description.json`, and feeds main's
+authoritative resolved REQUIRES / PRIV_REQUIRES lists back into the
+wrap.  This closes FB-027 and unlocks three classes of samples that
+the Day-54 textual `extract_requires_kw` could not handle:
+
+1. **`${var}` expansion in PRIV_REQUIRES** (FB-027 primary trigger)
+   `examples/protocols/esp_http_client/main/CMakeLists.txt`:
+   ```cmake
+   set(requires esp-tls nvs_flash esp_event esp_netif esp_http_client)
+   list(APPEND requires protocol_examples_common)
+   idf_component_register(... PRIV_REQUIRES ${requires})
+   ```
+   The textual extractor can only see the literal `${requires}` token;
+   the probe-configure step sees the resolved `priv_reqs: [esp-tls,
+   nvs_flash, esp_event, esp_netif, esp_http_client,
+   protocol_examples_common]` and emits that list verbatim.
+
+2. **Implicit-all-components rule for `main`** (icmp_echo, smtp_client)
+   When a sample's `main/CMakeLists.txt` declares NO REQUIRES /
+   PRIV_REQUIRES at all, ESP-IDF implicitly grants `main` access to
+   every component in the build.  `icmp_echo` relies on this to reach
+   `esp_console.h` and `smtp_client` to reach `mbedtls/platform.h`,
+   even though only `protocol_examples_common` is declared (via
+   `idf_component.yml`).  Our wrap always emits a non-empty REQUIRES
+   list (esp_wifi + esp_wifi_qemu + ...), which suppresses the
+   implicit-all behaviour.  Day 56 detects this case by checking the
+   original `main/CMakeLists.txt` for any REQUIRES / PRIV_REQUIRES
+   keyword; if absent, the wrap widens REQUIRES to the full probed
+   `build_components` list so every transitively-built component is
+   directly available to main.
+
+3. **`${project_dir}` references in EMBED_FILES / EMBED_TXTFILES + sample-root data dirs**
+   System-level OTA samples embed certificate material via
+   `EMBED_TXTFILES ${project_dir}/server_certs/ca_cert.pem` and rely
+   on sdkconfig keys (e.g. `CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH`)
+   that the build system resolves relative to `PROJECT_DIR`.  Day 56
+   substitutes `${project_dir}` / `${PROJECT_DIR}` /
+   `${CMAKE_CURRENT_LIST_DIR}` / `${CMAKE_CURRENT_SOURCE_DIR}` in
+   the extracted EMBED clauses, treats absolute paths as pass-through,
+   and symlinks every sample-root subdirectory (server_certs/, certs/,
+   data/, …) into the wrap dir so the cert-bundle build step finds
+   `server_certs/ca_cert.pem` relative to the wrap project root.
+
+The probe result is cached on a content hash of
+`main/CMakeLists.txt` + `main/idf_component.yml`, so repeated
+builds skip the ~4 s reconfigure overhead unless those files
+change.  If the probe fails (e.g. stubbed `idf.py` in unit tests),
+Day 56 silently falls back to the Day-54 textual extractor —
+keeping existing behaviour intact.
+
+Pinned by three regression tests in `tests/test_stock_sample_build.py`:
+`test_basic_wifi_smoke_includes_day56_protocol_samples`,
+`test_build_stock_sample_resolves_project_dir_in_embed_txtfiles`,
+and `test_build_stock_sample_symlinks_sample_root_data_dirs`.
+
+Remaining deferred:
+- `protocols/mqtt/ssl`, `protocols/mqtt/wss`, `protocols/https_x509_bundle`
+  — use `target_add_binary_data(target ...)` at the **project**
+  CMakeLists.txt level (not inside `idf_component_register`), which
+  the wrap script does not propagate.  Still tracked as FB-029.
 
 ### Day 55 — drop-in coverage advances further into `examples/protocols/**`
 

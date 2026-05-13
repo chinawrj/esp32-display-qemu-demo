@@ -112,6 +112,32 @@ A given sample is "supported" when:
   non-`.` entry as `${SAMPLE_MAIN_DIR}/${entry}` — preserving any
   `main/include/` style header layout (`https_request`,
   `https_request/main/include/time_sync.h`) without symlinking.
+- Day 56 — probe-configure helper unlocks `examples/protocols/**`
+  and `examples/system/ota/**` samples blocked by FB-027 (CMake
+  `${var}` expansion) and ESP-IDF's implicit-all-components rule
+  for `main`.  `tools/build-stock-sample.sh` now runs
+  `idf.py reconfigure` on the unmodified sample, parses
+  `project_description.json`, and uses main's authoritative
+  `priv_reqs` / `reqs` lists (probe result cached on a content
+  hash of `main/CMakeLists.txt` + `main/idf_component.yml`).
+  When the original sample's main declares no REQUIRES, the wrap
+  widens REQUIRES to the full probed `build_components` list to
+  match the implicit-all behaviour.  Day 56 also adds
+  `${project_dir}` / `${PROJECT_DIR}` substitution in EMBED_FILES
+  / EMBED_TXTFILES and symlinks sample-root data directories
+  (e.g. `server_certs/`) into the wrap so sdkconfig keys that
+  resolve relative to `PROJECT_DIR` (e.g.
+  `CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH`) land on the
+  correct file.  Nine more samples join the basic-wifi smoke
+  gate as build_only entries:
+    - `protocols/esp_http_client` (FB-027 primary trigger)
+    - `protocols/icmp_echo`, `protocols/smtp_client`
+      (implicit-all on `main`)
+    - `protocols/https_server/simple`, `protocols/https_server/wss_server`
+    - `protocols/modbus/serial/mb_master`
+    - `system/ota/simple_ota_example`, `system/ota/advanced_https_ota`,
+      `system/ota/native_ota_example`
+  Total stock-sample coverage: 23 → **32**.  FB-027 resolved.
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

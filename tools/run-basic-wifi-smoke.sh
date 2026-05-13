@@ -140,6 +140,29 @@ SAMPLES=(
     # unreachable from main/*.c at compile time.
     "mqtt_tcp|${IDF_PATH}/examples/protocols/mqtt/tcp|station|build_only"
     "https_request|${IDF_PATH}/examples/protocols/https_request|station|build_only"
+    # Day-56 (FB-027): probe-configure helper runs `idf.py reconfigure`
+    # on the unmodified sample and reads project_description.json to
+    # obtain main's authoritative resolved REQUIRES / PRIV_REQUIRES.
+    # This unlocks samples whose main/CMakeLists.txt uses ${var}
+    # expansion (esp_http_client), declares managed deps only in
+    # idf_component.yml (icmp_echo, smtp_client), or omits REQUIRES
+    # entirely and relies on ESP-IDF's implicit-all-components rule
+    # for main (the wrap now widens REQUIRES to the full probed
+    # build_components list in that case).  Day-56 also adds CMake
+    # variable substitution for ${project_dir}/${PROJECT_DIR} in
+    # EMBED_FILES/EMBED_TXTFILES and symlinks sample-root data dirs
+    # (server_certs/, etc.) into the wrap so sdkconfig keys that
+    # resolve relative to PROJECT_DIR (e.g. MBEDTLS_CUSTOM_CERTIFICATE_
+    # BUNDLE_PATH) land on the correct file.
+    "esp_http_client|${IDF_PATH}/examples/protocols/esp_http_client|station|build_only"
+    "icmp_echo|${IDF_PATH}/examples/protocols/icmp_echo|station|build_only"
+    "smtp_client|${IDF_PATH}/examples/protocols/smtp_client|station|build_only"
+    "https_server_simple|${IDF_PATH}/examples/protocols/https_server/simple|station|build_only"
+    "https_server_wss|${IDF_PATH}/examples/protocols/https_server/wss_server|station|build_only"
+    "modbus_mb_master|${IDF_PATH}/examples/protocols/modbus/serial/mb_master|station|build_only"
+    "ota_advanced_https|${IDF_PATH}/examples/system/ota/advanced_https_ota|station|build_only"
+    "ota_native|${IDF_PATH}/examples/system/ota/native_ota_example|station|build_only"
+    "ota_simple|${IDF_PATH}/examples/system/ota/simple_ota_example|station|build_only"
 )
 
 PASS=0
