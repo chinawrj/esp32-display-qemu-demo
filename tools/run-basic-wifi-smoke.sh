@@ -124,9 +124,17 @@ SAMPLES=(
     # extractor now stops at the keyword rather than at the paren so
     # multi-line idf_component_register clauses with CMake-variable
     # PRIV_REQUIRES (e.g. udp_client) extract correctly.
-    "tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|station|build_only"
+    # Day-60: tcp_client and udp_client are promoted from build_only to
+    # full runtime — the QEMU Wi-Fi data plane (GAP-I, Day-27) is good
+    # enough that the firmware dials 10.0.2.2:3333 (set in
+    # sdkconfig.qemu.wifi.defaults), the wifi_packet_relay NATs it to
+    # 127.0.0.1:3333, and our tools/{tcp,udp}_echo_server.py reply.
+    # Profile-name `tcp_client` / `udp_client` auto-starts the matching
+    # echo server inside run-stock-qemu.sh (Day-60), so no extra env
+    # plumbing is needed in the SAMPLES entry.
+    "tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|tcp_client|run"
     "tcp_server|${IDF_PATH}/examples/protocols/sockets/tcp_server|station|build_only"
-    "udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|station|build_only"
+    "udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|udp_client|run"
     "udp_server|${IDF_PATH}/examples/protocols/sockets/udp_server|station|build_only"
     "http_request|${IDF_PATH}/examples/protocols/http_request|station|build_only"
     "sntp|${IDF_PATH}/examples/protocols/sntp|station|build_only"

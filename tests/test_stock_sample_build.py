@@ -315,10 +315,13 @@ def test_basic_wifi_smoke_includes_day54_protocol_samples():
     common socket family with zero source diff.
     """
     script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    # Day-60 update: tcp_client and udp_client are now runtime entries
+    # (profile auto-launches the matching echo server).  The remaining
+    # four samples still validate Day-54's drop-in build_only promise.
     for entry in (
-        "tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|station|build_only",
+        "tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|tcp_client|run",
         "tcp_server|${IDF_PATH}/examples/protocols/sockets/tcp_server|station|build_only",
-        "udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|station|build_only",
+        "udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|udp_client|run",
         "udp_server|${IDF_PATH}/examples/protocols/sockets/udp_server|station|build_only",
         "http_request|${IDF_PATH}/examples/protocols/http_request|station|build_only",
         "sntp|${IDF_PATH}/examples/protocols/sntp|station|build_only",
@@ -1253,4 +1256,80 @@ def test_run_stock_qemu_exposes_real_scan_env():
     )
     assert "--real-scan" in script, (
         "run-stock-qemu.sh must pass --real-scan flag to mock_wpa_supplicant.py"
+    )
+
+
+# ===========================================================================
+# Day 60 — promote tcp_client + udp_client from build_only to runtime
+# ===========================================================================
+
+def test_basic_wifi_smoke_promotes_tcp_client_to_runtime():
+    """Day-60: tcp_client is promoted from build_only to full runtime via
+    profile `tcp_client` (which auto-launches the helper echo server).
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    assert '"tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|tcp_client|run"' in script, (
+        "Day-60: tcp_client must be a runtime entry with profile=tcp_client"
+    )
+    assert '"tcp_client|${IDF_PATH}/examples/protocols/sockets/tcp_client|station|build_only"' not in script, (
+        "Day-60: stale build_only tcp_client entry must be removed"
+    )
+
+
+def test_basic_wifi_smoke_promotes_udp_client_to_runtime():
+    """Day-60: udp_client is promoted from build_only to full runtime via
+    profile `udp_client` (which auto-launches the helper echo server).
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    assert '"udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|udp_client|run"' in script, (
+        "Day-60: udp_client must be a runtime entry with profile=udp_client"
+    )
+    assert '"udp_client|${IDF_PATH}/examples/protocols/sockets/udp_client|station|build_only"' not in script, (
+        "Day-60: stale build_only udp_client entry must be removed"
+    )
+
+
+def test_run_stock_qemu_auto_launches_tcp_echo_server():
+    """Day-60: VERIFY_PROFILE=tcp_client must default TCP_ECHO_PORT to 3333
+    so smoke-gate entries don't need to plumb extra env per sample.
+    """
+    script = (TOOLS_DIR / "run-stock-qemu.sh").read_text()
+    # The profile case must promote the default echo port to 3333.
+    m = re.search(
+        r"tcp_client\)\s*EXPECT_PAT=.*?TCP_ECHO_PORT=3333",
+        script,
+        re.DOTALL,
+    )
+    assert m is not None, (
+        "Day-60: run-stock-qemu.sh tcp_client profile must auto-default "
+        "TCP_ECHO_PORT to 3333"
+    )
+
+
+def test_run_stock_qemu_auto_launches_udp_echo_server():
+    """Day-60: VERIFY_PROFILE=udp_client must default UDP_ECHO_PORT to 3333."""
+    script = (TOOLS_DIR / "run-stock-qemu.sh").read_text()
+    m = re.search(
+        r"udp_client\)\s*EXPECT_PAT=.*?UDP_ECHO_PORT=3333",
+        script,
+        re.DOTALL,
+    )
+    assert m is not None, (
+        "Day-60: run-stock-qemu.sh udp_client profile must auto-default "
+        "UDP_ECHO_PORT to 3333"
+    )
+
+
+def test_sdkconfig_qemu_wifi_defaults_targets_relay_nat():
+    """Day-60: tcp_client/udp_client runtime requires the sample firmware
+    to dial 10.0.2.2:3333 (the address wifi_packet_relay NATs to
+    127.0.0.1:3333 on the host). This is set in the project-wide
+    sdkconfig.qemu.wifi.defaults via CONFIG_EXAMPLE_IPV4_ADDR + PORT.
+    """
+    text = (PROJECT_ROOT / "sdkconfig.qemu.wifi.defaults").read_text()
+    assert 'CONFIG_EXAMPLE_IPV4_ADDR="10.0.2.2"' in text, (
+        "Day-60: sdkconfig.qemu.wifi.defaults must set EXAMPLE_IPV4_ADDR to 10.0.2.2"
+    )
+    assert "CONFIG_EXAMPLE_PORT=3333" in text, (
+        "Day-60: sdkconfig.qemu.wifi.defaults must set EXAMPLE_PORT to 3333"
     )

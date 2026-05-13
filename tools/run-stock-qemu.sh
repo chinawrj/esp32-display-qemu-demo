@@ -69,9 +69,20 @@ case "$VERIFY_PROFILE" in
         ;;
     tcp_client)
         EXPECT_PAT="${EXPECT_PAT:-Message sent|Received.*bytes}"
+        # Day-60 auto-launch: profile tcp_client implies the helper echo
+        # server on the same port the firmware was built to dial (3333,
+        # from sdkconfig.qemu.wifi.defaults). User can still override via
+        # explicit TCP_ECHO_PORT=N (or =0 to disable).
+        if [ "$TCP_ECHO_PORT" = "0" ]; then
+            TCP_ECHO_PORT=3333
+        fi
         ;;
     udp_client)
         EXPECT_PAT="${EXPECT_PAT:-Message sent|Received.*bytes}"
+        # Day-60 auto-launch (see tcp_client comment above).
+        if [ "$UDP_ECHO_PORT" = "0" ]; then
+            UDP_ECHO_PORT=3333
+        fi
         ;;
     custom)
         EXPECT_PAT="${EXPECT_PAT:-got ip:[0-9]}"

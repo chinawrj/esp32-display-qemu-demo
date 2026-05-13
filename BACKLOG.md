@@ -213,6 +213,24 @@ A given sample is "supported" when:
   `wifi/wifi_aware/nan_subscriber`).  Total stock-sample coverage:
   65 → **74**.  FB-032 resolved.  Still deferred: `network/sta2eth`
   (needs `tinyusb` USB-peripheral stack — hardware-only).
+- Day 60 — promote `tcp_client` + `udp_client` from build_only → full
+  runtime in the smoke gate.  Two entries flip mode (coverage count
+  unchanged at **74**, but the gate now exercises the GAP-I data
+  plane end-to-end on every push).  The infrastructure was already in
+  place since Day 27: real MMIO TX via `qemu_wifi_tx_raw`, late
+  static-IP handler, RX buffer free, SLIRP-style NAT mapping
+  `10.0.2.2:N` → host `127.0.0.1:N` in `wifi_packet_relay`, plus
+  `tools/{tcp,udp}_echo_server.py`.  Day 60 closes the last gap: (1)
+  `run-stock-qemu.sh` now defaults `TCP_ECHO_PORT`/`UDP_ECHO_PORT` to
+  `3333` when `VERIFY_PROFILE` selects the matching profile (so
+  SAMPLES entries don't need a 6th env-var field), and (2) the two
+  smoke entries flip to `tcp_client|...|tcp_client|run` and
+  `udp_client|...|udp_client|run`.  Verified: firmware reaches
+  GOT_IP, dials `10.0.2.2:3333`, host echo replies, ESP-IDF sample
+  logs `Received N bytes`, run-stock-qemu reports `5 checks passed,
+  0 failed` — all with zero `.c`/`.h` source diff (the project-wide
+  `sdkconfig.qemu.wifi.defaults` already supplied
+  `CONFIG_EXAMPLE_IPV4_ADDR="10.0.2.2"` + `CONFIG_EXAMPLE_PORT=3333`).
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

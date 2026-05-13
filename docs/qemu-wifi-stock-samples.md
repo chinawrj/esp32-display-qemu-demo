@@ -17,6 +17,8 @@ defaults.
 | `examples/wifi/getting_started/softAP/` | `softap` | `wifi_init_softap finished` |
 | `examples/wifi/fast_scan/` | `station` | `got ip:10.0.2.15` (Day 50 — see below) |
 | `examples/wifi/power_save/` | `station` | `got ip:10.0.2.15` (Day 51 — see below) |
+| `examples/protocols/sockets/tcp_client/` | `tcp_client` | `Received N bytes` (firmware dials `10.0.2.2:3333` → host echo — Day 60) |
+| `examples/protocols/sockets/udp_client/` | `udp_client` | `Received N bytes` (firmware dials `10.0.2.2:3333` → host echo — Day 60) |
 
 ### Build-only coverage (Day 48)
 
@@ -39,9 +41,9 @@ console UART input).
 | `examples/wifi/itwt/` | 802.11ax iTWT / TWT API (`esp_wifi_sta_itwt_setup`, `esp_wifi_sta_twt_config`) link clean as ESP_ERR_NOT_SUPPORTED stubs on the non-HE esp32 target — Day 52 |
 | `examples/wifi/wifi_eap_fast/` | EAP-FAST 802.1X enterprise auth — link surface from `esp_wifi_sta_wpa2_ent_*` family + TLS material (`ca.pem`, `pac_file.pac`) embedded via `EMBED_TXTFILES` — Day 53 |
 | `examples/wifi/wifi_enterprise/` | PEAP/TTLS 802.1X enterprise auth — link surface + TLS material (`ca.pem`, `client.crt`, `client.key`) embedded via `EMBED_TXTFILES` — Day 53 |
-| `examples/protocols/sockets/tcp_client/` | lwIP-over-Wi-Fi BSD TCP-client socket API (`socket`, `connect`, `send`, `recv`) links clean on top of `example_connect()` — Day 54 |
+| `examples/protocols/sockets/tcp_client/` | lwIP-over-Wi-Fi BSD TCP-client socket API (`socket`, `connect`, `send`, `recv`) links clean on top of `example_connect()` — Day 54 (promoted to runtime Day 60) |
 | `examples/protocols/sockets/tcp_server/` | BSD TCP-server socket API (`bind`, `listen`, `accept`) links clean on top of `example_connect()` — Day 54 |
-| `examples/protocols/sockets/udp_client/` | BSD UDP-client socket API (`sendto`) links clean — Day 54 |
+| `examples/protocols/sockets/udp_client/` | BSD UDP-client socket API (`sendto`) links clean — Day 54 (promoted to runtime Day 60) |
 | `examples/protocols/sockets/udp_server/` | BSD UDP-server socket API (`recvfrom`) links clean — Day 54 |
 | `examples/protocols/http_request/` | lwIP DNS resolver + raw HTTP request over a BSD socket — Day 54 |
 | `examples/protocols/sntp/` | LwIP SNTP client over Wi-Fi — Day 54 |
@@ -128,6 +130,59 @@ before still gets it.  Pinned by
 Still deferred:
 - `examples/network/sta2eth` — needs `tinyusb` USB-peripheral
   stack (hardware-only — no QEMU emulation).
+
+### Day 60 — `tcp_client` + `udp_client` runtime promotion
+
+Day 60 promotes the two P1 socket samples from **build_only** to
+**full runtime** in the smoke gate.  Total stock-sample coverage is
+unchanged at 74 (the same two entries flip mode), but the release
+gate now exercises the GAP-I lwIP-over-QEMU-Wi-Fi data plane
+end-to-end on every push — not just the link/build.
+
+**Why this only needed glue.**  The heavy lifting landed on Day 27
+(GAP-I): `esp_wifi_internal_tx` performs real MMIO TX via
+`qemu_wifi_tx_raw`; the late `WIFI_EVENT_STA_CONNECTED` handler
+assigns the static IP *after* IDF's DHCP-clearing default handler
+(no more EHOSTUNREACH); `esp_wifi_internal_free_rx_buffer` actually
+frees, removing the leak; `wifi_packet_relay.py` NATs firmware-side
+`10.0.2.2:N` to host `127.0.0.1:N` (SLIRP-style); and the helper
+echo servers `tools/tcp_echo_server.py` /
+`tools/udp_echo_server.py` listen on `127.0.0.1:3333`.  The
+project-wide `sdkconfig.qemu.wifi.defaults` already sets
+`CONFIG_EXAMPLE_IPV4_ADDR="10.0.2.2"` + `CONFIG_EXAMPLE_PORT=3333`
+— so the upstream sample, with zero source change, dials the right
+target.  All that remained was wiring the smoke gate to flip those
+two entries to `run`.
+
+**The Day-60 glue.**
+
+1. `tools/run-stock-qemu.sh`: when `VERIFY_PROFILE=tcp_client` (or
+   `udp_client`), default `TCP_ECHO_PORT` (resp. `UDP_ECHO_PORT`) to
+   `3333` if the caller didn't override.  This means a smoke-gate
+   entry can express "run this sample, expect the matching echo" by
+   profile name alone — no 6th env-var column needed in the SAMPLES
+   array.  Override is still possible by exporting the env var
+   explicitly.
+
+2. `tools/run-basic-wifi-smoke.sh`: flip the two SAMPLES entries
+   from `station|build_only` to `tcp_client|run` (resp.
+   `udp_client|run`).
+
+**End-to-end verification** (single sample, smoke-gate path):
+
+```
+. $IDF_PATH/export.sh
+bash tools/build-stock-sample.sh $IDF_PATH/examples/protocols/sockets/tcp_client
+VERIFY_PROFILE=tcp_client bash tools/run-stock-qemu.sh \
+    $IDF_PATH/examples/protocols/sockets/tcp_client/build_qemu 60
+# → "5 check(s) passed, 0 failed."  TCP-ECHO logs show the firmware
+#   dialing 10.0.2.2:3333, payload "Message from ESP32 " round-trips,
+#   ESP-IDF sample logs "Received 25 bytes from 10.0.2.2".
+```
+
+Pinned by `test_basic_wifi_smoke_promotes_{tcp,udp}_client_to_runtime`,
+`test_run_stock_qemu_auto_launches_{tcp,udp}_echo_server`,
+`test_sdkconfig_qemu_wifi_defaults_targets_relay_nat`.
 
 ### Day 58 — sample-root `components/` discovery (FB-030) + generalized post-`project()` propagation (FB-031)
 
