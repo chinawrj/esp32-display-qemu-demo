@@ -589,6 +589,136 @@ def test_basic_wifi_smoke_includes_day57_fb029_samples():
         )
 
 
+def test_basic_wifi_smoke_includes_day58_fb030_fb031_samples():
+    """Day-58: FB-030 (sample-root components/ via EXTRA_COMPONENT_DIRS) +
+    FB-031 (generalized post-project() CMakeLists propagation) unlocked
+    custom_outbox, captive_portal, and console/advanced.  All three must
+    appear in the smoke gate as build_only entries.
+    """
+    script = PROJECT_ROOT / "tools" / "run-basic-wifi-smoke.sh"
+    text = script.read_text()
+    for name in (
+        "mqtt_custom_outbox",
+        "http_server_captive_portal",
+        "console_advanced",
+    ):
+        assert f'"{name}|' in text, (
+            f"Day-58: smoke gate missing {name} build_only entry"
+        )
+
+
+def test_build_stock_sample_injects_extra_component_dirs(tmp_path):
+    """Day-58 FB-030: when the stock sample has a top-level components/
+    subdirectory (e.g. http_server/captive_portal/components/dns_server),
+    the wrap CMakeLists.txt must inject the sample's components/ path
+    into EXTRA_COMPONENT_DIRS *before* including project.cmake — so
+    ESP-IDF's component discovery picks them up.
+    """
+    sample = tmp_path / "sample_with_components"
+    main_dir = sample / "main"
+    main_dir.mkdir(parents=True)
+    comp_dir = sample / "components" / "extra_comp"
+    comp_dir.mkdir(parents=True)
+    (comp_dir / "CMakeLists.txt").write_text(
+        'idf_component_register(SRCS "extra.c" INCLUDE_DIRS ".")\n'
+    )
+    (comp_dir / "extra.c").write_text("/* dummy */\n")
+    (main_dir / "fake.c").write_text("/* fake */\n")
+    (sample / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        "project(sample_with_components)\n"
+    )
+    (main_dir / "CMakeLists.txt").write_text(
+        'idf_component_register(SRCS "fake.c" INCLUDE_DIRS ".")\n'
+    )
+    stub_idf = tmp_path / "idf" / "tools" / "idf.py"
+    stub_idf.parent.mkdir(parents=True)
+    stub_idf.write_text("#!/usr/bin/env bash\nexit 0\n")
+    stub_idf.chmod(0o755)
+    env = os.environ.copy()
+    env["IDF_PATH"] = str(tmp_path / "idf")
+    env["PATH"] = f"{stub_idf.parent}:{env.get('PATH','')}"
+    env["BUILD_DIR"] = str(sample / "build_qemu")
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"build-stock-sample.sh failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
+    )
+    wrap_cmake = (
+        sample / "_qemu_wrap_sample_with_components" / "CMakeLists.txt"
+    ).read_text()
+    expected = f'"{sample}/components"'
+    assert "EXTRA_COMPONENT_DIRS" in wrap_cmake and expected in wrap_cmake, (
+        f"Day-58 FB-030: EXTRA_COMPONENT_DIRS injection missing.\n"
+        f"Expected substring: {expected}\nActual wrap CMakeLists:\n{wrap_cmake}"
+    )
+    # And the injection must be BEFORE the project.cmake include — otherwise
+    # ESP-IDF won't see the extra dirs during component discovery.
+    inc_idx = wrap_cmake.find("include(")
+    inj_idx = wrap_cmake.find("EXTRA_COMPONENT_DIRS")
+    assert 0 <= inj_idx < inc_idx, (
+        f"Day-58 FB-030: EXTRA_COMPONENT_DIRS must come BEFORE include().\n"
+        f"include() at {inc_idx}, injection at {inj_idx}\n{wrap_cmake}"
+    )
+
+
+def test_build_stock_sample_substitutes_cmake_current_source_dir(tmp_path):
+    """Day-58 FB-031: when the stock sample's top-level CMakeLists.txt has
+    project-level code that references ${CMAKE_CURRENT_SOURCE_DIR} (e.g.
+    mqtt/custom_outbox injects a source into the mqtt component), the
+    propagated line in the wrap CMakeLists must rewrite that ref to
+    ${SAMPLE_DIR} (absolute), because the wrap dir is not the sample dir.
+    """
+    sample = tmp_path / "src_inject_sample"
+    main_dir = sample / "main"
+    main_dir.mkdir(parents=True)
+    (main_dir / "fake.c").write_text("/* fake */\n")
+    (main_dir / "custom.cpp").write_text("// custom\n")
+    (sample / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        "project(src_inject_sample)\n"
+        "idf_component_get_property(mqtt mqtt COMPONENT_LIB)\n"
+        "target_sources(${mqtt} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/main/custom.cpp)\n"
+    )
+    (main_dir / "CMakeLists.txt").write_text(
+        'idf_component_register(SRCS "fake.c" INCLUDE_DIRS ".")\n'
+    )
+    stub_idf = tmp_path / "idf" / "tools" / "idf.py"
+    stub_idf.parent.mkdir(parents=True)
+    stub_idf.write_text("#!/usr/bin/env bash\nexit 0\n")
+    stub_idf.chmod(0o755)
+    env = os.environ.copy()
+    env["IDF_PATH"] = str(tmp_path / "idf")
+    env["PATH"] = f"{stub_idf.parent}:{env.get('PATH','')}"
+    env["BUILD_DIR"] = str(sample / "build_qemu")
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "tools" / "build-stock-sample.sh"), str(sample)],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"build-stock-sample.sh failed:\nSTDOUT={result.stdout}\nSTDERR={result.stderr}"
+    )
+    wrap_cmake = (
+        sample / "_qemu_wrap_src_inject_sample" / "CMakeLists.txt"
+    ).read_text()
+    assert "target_sources" in wrap_cmake, (
+        f"Day-58 FB-031: post-project() line not propagated:\n{wrap_cmake}"
+    )
+    # The CMAKE_CURRENT_SOURCE_DIR ref must have been substituted with the
+    # absolute path to the sample.
+    assert "${CMAKE_CURRENT_SOURCE_DIR}" not in wrap_cmake, (
+        f"Day-58 FB-031: ${{CMAKE_CURRENT_SOURCE_DIR}} not substituted:\n{wrap_cmake}"
+    )
+    assert f"{sample}/main/custom.cpp" in wrap_cmake, (
+        f"Day-58 FB-031: expected absolute path {sample}/main/custom.cpp "
+        f"in propagated line.\nActual:\n{wrap_cmake}"
+    )
+
+
 def test_build_stock_sample_propagates_project_target_add_binary_data(tmp_path):
     """Day-57 FB-029: project-level target_add_binary_data() calls in the
     stock sample's top-level CMakeLists.txt must be re-emitted in the

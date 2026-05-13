@@ -60,6 +60,107 @@ console UART input).
 | `examples/protocols/mqtt/wss/` | esp_mqtt_client over WebSocket+TLS with project-level cert — Day 57 (FB-029) |
 | `examples/protocols/mqtt/ssl_mutual_auth/` | esp_mqtt_client with mutual TLS (client cert+key + server cert) — Day 57 (FB-029, multi-asset `target_add_binary_data`) |
 | `examples/protocols/https_x509_bundle/` | Custom mbedtls certificate bundle resolved via sdkconfig `CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH="certs"` — Day 57 (via Day-56 sample-root data-dir symlinking) |
+| `examples/protocols/mqtt/custom_outbox/` | C++ override of the mqtt component's outbox via project-level `idf_component_get_property` + `target_sources` — Day 58 (FB-031) |
+| `examples/protocols/http_server/captive_portal/` | esp_http_server captive-portal with sample-local `dns_server` component — Day 58 (FB-030 `EXTRA_COMPONENT_DIRS`) |
+| `examples/system/console/advanced/` | esp_console REPL with sample-local `cmd_system`/`cmd_nvs`/`cmd_wifi` components — Day 58 (FB-030) |
+| `examples/system/console/basic/` | esp_console minimal REPL — Day 58 |
+| `examples/protocols/esp_local_ctrl/` | esp_local_ctrl provisioning protocol over Wi-Fi — Day 58 |
+| `examples/protocols/l2tap/` | L2 raw-ethernet socket tap — Day 58 |
+| `examples/protocols/static_ip/` | Static IP configuration via `esp_netif_set_ip_info` — Day 58 |
+| `examples/protocols/https_mbedtls/` | Raw mbedtls TLS handshake + GET — Day 58 |
+| `examples/protocols/dns_over_https/` | DNS-over-HTTPS resolver — Day 58 |
+| `examples/protocols/mqtt/ssl_psk/` | esp_mqtt_client over TLS-PSK — Day 58 |
+| `examples/protocols/mqtt/ws/` | esp_mqtt_client over WebSocket (plain) — Day 58 |
+| `examples/protocols/mqtt5/` | esp_mqtt5 (MQTT v5.0) client — Day 58 |
+| `examples/protocols/http_server/simple/` | esp_http_server simple GET/POST endpoints — Day 58 |
+| `examples/protocols/http_server/restful_server/` | esp_http_server RESTful API with SPIFFS frontend — Day 58 |
+| `examples/protocols/http_server/ws_echo_server/` | esp_http_server WebSocket echo — Day 58 |
+| `examples/protocols/http_server/persistent_sockets/` | esp_http_server per-socket session context — Day 58 |
+| `examples/protocols/http_server/async_handlers/` | esp_http_server async request handlers — Day 58 |
+| `examples/protocols/http_server/file_serving/` | esp_http_server static file serving from SPIFFS — Day 58 |
+| `examples/protocols/sockets/non_blocking/` | BSD sockets with `fcntl(O_NONBLOCK)` + `select` — Day 58 |
+| `examples/protocols/sockets/icmpv6_ping/` | ICMPv6 ping client over Wi-Fi — Day 58 |
+| `examples/protocols/sockets/tcp_transport_client/` | esp-tls/esp_transport client — Day 58 |
+| `examples/protocols/sockets/udp_multicast/` | IGMP join + UDP multicast send/recv — Day 58 |
+| `examples/protocols/sockets/tcp_client_multi_net/` | TCP client with multi-netif routing — Day 58 |
+| `examples/protocols/modbus/tcp/mb_tcp_master/` | Modbus TCP master — Day 58 |
+| `examples/protocols/modbus/tcp/mb_tcp_slave/` | Modbus TCP slave — Day 58 |
+| `examples/protocols/modbus/serial/mb_slave/` | Modbus serial slave — Day 58 |
+| `examples/wifi/iperf/` | iperf2/3-compatible throughput tool — Day 58 |
+| `examples/wifi/wifi_easy_connect/dpp-enrollee/` | Wi-Fi Easy Connect (DPP) enrollee — Day 58 |
+| `examples/system/ota/otatool/` | otatool partition manipulation example — Day 58 |
+
+### Day 58 — sample-root `components/` discovery (FB-030) + generalized post-`project()` propagation (FB-031)
+
+Day 58 lands two complementary wrap-script generalizations and
+takes total stock-sample coverage from **36 to 65** — pure
+drop-in (zero `.c`/`.h` source diff to any of the 65 samples).
+
+**FB-030 — sample-root `components/` discovery.**  Stock samples
+that ship local components (e.g.
+`protocols/http_server/captive_portal/components/dns_server`,
+`system/console/advanced/components/cmd_system`) failed with
+`Failed to resolve component '<comp>' required by component
+'main': unknown name` because the wrap project's PROJECT_DIR is
+the wrap dir, not the sample dir, and ESP-IDF's component
+discovery only scans `<PROJECT_DIR>/components/` plus
+`EXTRA_COMPONENT_DIRS`.  Day-56's data-dir symlink loop
+explicitly skipped `components/` (correct — we don't want to
+clone the component tree).  Day 58 emits
+`list(APPEND EXTRA_COMPONENT_DIRS "${SAMPLE_DIR}/components")`
+in the wrap CMakeLists.txt between `cmake_minimum_required(...)`
+and `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`, which
+is the exact place ESP-IDF reads the variable during component
+discovery.  Pinned by
+`test_build_stock_sample_injects_extra_component_dirs`.
+
+**FB-031 — generalized post-`project()` propagation.**  FB-029
+only re-emitted `target_add_binary_data(...)` lines from the
+sample's top-level CMakeLists.txt.  Other project-level calls
+were silently dropped, e.g. `protocols/mqtt/custom_outbox`
+which injects a C++ override into the system `mqtt` component
+via four lines:
+
+```cmake
+idf_component_get_property(mqtt mqtt COMPONENT_LIB)
+target_sources(${mqtt} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/main/custom_outbox.cpp)
+idf_component_get_property(pthread pthread COMPONENT_LIB)
+target_link_libraries(${mqtt} ${pthread})
+```
+
+Without these, the link fails with `undefined reference to
+outbox_enqueue/outbox_dequeue/...`.  Day 58 widens the
+propagation to *every non-blank, non-comment line strictly
+after the original `project(...)` line*, with four CMake
+variable refs rewritten to the literal `${SAMPLE_DIR}`
+absolute path: `${CMAKE_CURRENT_SOURCE_DIR}`,
+`${CMAKE_CURRENT_LIST_DIR}`, `${PROJECT_DIR}`, `${project_dir}`.
+The Day-57 quoted-asset-path rewrite for
+`target_add_binary_data` is preserved as a special case.
+Pinned by
+`test_build_stock_sample_substitutes_cmake_current_source_dir`.
+
+**Coverage delta.**  Combined with a broader sweep of
+candidates that newly pass after the FB-030/031 fixes, 29
+build_only entries join the smoke gate.  Three trigger the new
+fixes directly (`mqtt_custom_outbox`, `http_server_captive_portal`,
+`console_advanced`); the rest are samples that were already
+within reach of the Day-54..57 wrap and only needed to be
+explicitly tried (six http_server variants, three additional
+mqtt clients, five socket variants, three modbus variants,
+several stand-alones).
+
+Pinned by three regression tests:
+`test_basic_wifi_smoke_includes_day58_fb030_fb031_samples`,
+`test_build_stock_sample_injects_extra_component_dirs`, and
+`test_build_stock_sample_substitutes_cmake_current_source_dir`.
+
+Remaining deferred:
+- `network/{sta2eth,bridge,vlan_support,simple_sniffer}` — fail
+  at `kconfgen` time on Wi-Fi-AP/Ethernet hybrid config that the
+  QEMU sdkconfig overlay does not yet cover.
+- `protocols/mqtt/ssl_ds` — needs the Digital Signature
+  peripheral (`esp_secure_cert_mgr`); hardware-only.
 
 ### Day 56 — probe-configure helper unlocks `${var}` expansion and implicit-all `main`
 

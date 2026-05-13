@@ -168,6 +168,38 @@ SAMPLES=(
     "mqtt_wss|${IDF_PATH}/examples/protocols/mqtt/wss|station|build_only"
     "mqtt_ssl_mutual_auth|${IDF_PATH}/examples/protocols/mqtt/ssl_mutual_auth|station|build_only"
     "https_x509_bundle|${IDF_PATH}/examples/protocols/https_x509_bundle|station|build_only"
+    # Day-58 FB-030 (sample-root components/ via EXTRA_COMPONENT_DIRS) +
+    # FB-031 (generalized post-project() CMakeLists propagation w/ var subst).
+    "mqtt_custom_outbox|${IDF_PATH}/examples/protocols/mqtt/custom_outbox|station|build_only"
+    "http_server_captive_portal|${IDF_PATH}/examples/protocols/http_server/captive_portal|station|build_only"
+    "console_advanced|${IDF_PATH}/examples/system/console/advanced|station|build_only"
+    # Day-58 — additional drop-in coverage unlocked by the generalized wrap.
+    "console_basic|${IDF_PATH}/examples/system/console/basic|station|build_only"
+    "esp_local_ctrl|${IDF_PATH}/examples/protocols/esp_local_ctrl|station|build_only"
+    "l2tap|${IDF_PATH}/examples/protocols/l2tap|station|build_only"
+    "static_ip|${IDF_PATH}/examples/protocols/static_ip|station|build_only"
+    "https_mbedtls|${IDF_PATH}/examples/protocols/https_mbedtls|station|build_only"
+    "dns_over_https|${IDF_PATH}/examples/protocols/dns_over_https|station|build_only"
+    "mqtt_ssl_psk|${IDF_PATH}/examples/protocols/mqtt/ssl_psk|station|build_only"
+    "mqtt_ws|${IDF_PATH}/examples/protocols/mqtt/ws|station|build_only"
+    "mqtt5|${IDF_PATH}/examples/protocols/mqtt5|station|build_only"
+    "http_server_simple|${IDF_PATH}/examples/protocols/http_server/simple|station|build_only"
+    "http_server_restful|${IDF_PATH}/examples/protocols/http_server/restful_server|station|build_only"
+    "http_server_ws_echo|${IDF_PATH}/examples/protocols/http_server/ws_echo_server|station|build_only"
+    "http_server_persistent|${IDF_PATH}/examples/protocols/http_server/persistent_sockets|station|build_only"
+    "http_server_async|${IDF_PATH}/examples/protocols/http_server/async_handlers|station|build_only"
+    "http_server_file_serving|${IDF_PATH}/examples/protocols/http_server/file_serving|station|build_only"
+    "sockets_non_blocking|${IDF_PATH}/examples/protocols/sockets/non_blocking|station|build_only"
+    "sockets_icmpv6_ping|${IDF_PATH}/examples/protocols/sockets/icmpv6_ping|station|build_only"
+    "sockets_tcp_transport|${IDF_PATH}/examples/protocols/sockets/tcp_transport_client|station|build_only"
+    "sockets_udp_multicast|${IDF_PATH}/examples/protocols/sockets/udp_multicast|station|build_only"
+    "sockets_tcp_multi_net|${IDF_PATH}/examples/protocols/sockets/tcp_client_multi_net|station|build_only"
+    "modbus_tcp_master|${IDF_PATH}/examples/protocols/modbus/tcp/mb_tcp_master|station|build_only"
+    "modbus_tcp_slave|${IDF_PATH}/examples/protocols/modbus/tcp/mb_tcp_slave|station|build_only"
+    "modbus_serial_slave|${IDF_PATH}/examples/protocols/modbus/serial/mb_slave|station|build_only"
+    "wifi_iperf|${IDF_PATH}/examples/wifi/iperf|station|build_only"
+    "wifi_dpp_enrollee|${IDF_PATH}/examples/wifi/wifi_easy_connect/dpp-enrollee|station|build_only"
+    "ota_otatool|${IDF_PATH}/examples/system/ota/otatool|station|build_only"
 )
 
 PASS=0

@@ -157,6 +157,43 @@ A given sample is "supported" when:
   Total stock-sample coverage: 32 → **36**.  FB-029 resolved.
   (`protocols/mqtt/ssl_ds` remains out of scope: needs the
   Digital Signature peripheral driver, which is hardware-only.)
+- Day 58 — two complementary wrap-script generalizations close
+  FB-030 and FB-031, taking the smoke gate from 36 to **65**.
+  **FB-030** (sample-root `components/` discovery): when the
+  stock sample ships components under `<sample>/components/<comp>/`
+  (e.g. `protocols/http_server/captive_portal` ships `dns_server`,
+  `system/console/advanced` ships `cmd_system`/`cmd_nvs`/
+  `cmd_wifi`), the wrap script now emits
+  `list(APPEND EXTRA_COMPONENT_DIRS "${SAMPLE_DIR}/components")`
+  in the wrap CMakeLists.txt *before* `include(project.cmake)`,
+  so ESP-IDF's component discovery finds them without any
+  copy/symlink.  **FB-031** (generalized post-`project()`
+  propagation): FB-029's `target_add_binary_data`-only re-emit
+  is widened to every non-trivial line after the original
+  `project(...)` line, with `${CMAKE_CURRENT_SOURCE_DIR}` /
+  `${CMAKE_CURRENT_LIST_DIR}` / `${PROJECT_DIR}` /
+  `${project_dir}` rewritten to the literal `${SAMPLE_DIR}`
+  absolute path.  This unlocks samples like
+  `protocols/mqtt/custom_outbox` that override system-component
+  sources via `idf_component_get_property` + `target_sources`.
+  Combined with a broader sweep of newly-passing samples,
+  29 additional build_only entries join the smoke gate:
+  3 FB-030/031 trigger samples (`mqtt_custom_outbox`,
+  `http_server_captive_portal`, `console_advanced`); 6
+  protocols/http_server variants (`simple`, `restful_server`,
+  `ws_echo_server`, `persistent_sockets`, `async_handlers`,
+  `file_serving`); 3 mqtt extras (`ssl_psk`, `ws`, `mqtt5`);
+  5 socket variants (`non_blocking`, `icmpv6_ping`,
+  `tcp_transport_client`, `udp_multicast`, `tcp_client_multi_net`);
+  3 modbus (`tcp/mb_tcp_master`, `tcp/mb_tcp_slave`,
+  `serial/mb_slave`); and a long tail of stand-alones
+  (`console_basic`, `esp_local_ctrl`, `l2tap`, `static_ip`,
+  `https_mbedtls`, `dns_over_https`, `wifi/iperf`,
+  `wifi/wifi_easy_connect/dpp-enrollee`, `system/ota/otatool`).
+  Total stock-sample coverage: 36 → **65**.  FB-030 and FB-031
+  resolved.  Pure drop-in: zero `.c`/`.h` source diff to any of
+  the 65 stock samples — only `CMakeLists.txt` + `sdkconfig`
+  overlay via the wrap script.
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)
