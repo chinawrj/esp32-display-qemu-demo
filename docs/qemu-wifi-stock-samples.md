@@ -100,6 +100,65 @@ console UART input).
 | `examples/wifi/wifi_aware/nan_console/` | Wi-Fi Aware (NAN) interactive console — Day 59 |
 | `examples/wifi/wifi_aware/nan_publisher/` | Wi-Fi Aware (NAN) publisher — Day 59 |
 | `examples/wifi/wifi_aware/nan_subscriber/` | Wi-Fi Aware (NAN) subscriber — Day 59 |
+| `examples/system/base_mac_address/` | base MAC address API — Day 61 |
+| `examples/system/esp_timer/` | high-resolution timer API — Day 61 |
+| `examples/system/eventfd/` | POSIX-like eventfd integration with VFS — Day 61 |
+| `examples/system/select/` | `select()` over VFS+lwIP sockets — Day 61 |
+| `examples/system/startup_time/` | early-boot timing instrumentation — Day 61 |
+| `examples/system/light_sleep/` | light-sleep entry/exit + wake sources — Day 61 |
+| `examples/system/rt_mqueue/` | POSIX message queue (mqueue) API — Day 61 |
+| `examples/system/deep_sleep/` | deep-sleep wake sources + RTC retention — Day 61 |
+| `examples/system/efuse/` | eFuse read/burn API — Day 61 |
+| `examples/system/perfmon/` | performance-counter (perfmon) demo — Day 61 |
+| `examples/system/pthread/` | POSIX pthread API — Day 61 |
+| `examples/system/freertos/real_time_stats/` | FreeRTOS runtime stats — Day 61 |
+| `examples/system/heap_task_tracking/basic/` | per-task heap accounting (basic) — Day 61 |
+| `examples/system/heap_task_tracking/advanced/` | per-task heap accounting (advanced) — Day 61 |
+| `examples/system/esp_event/default_event_loop/` | esp_event default loop API — Day 61 |
+| `examples/system/esp_event/user_event_loops/` | esp_event user-defined loops — Day 61 |
+
+### Day 61 — drop-in coverage extends into `examples/system/*`
+
+Day 61 surveys `$IDF_PATH/examples/system/` for samples that link
+clean against the QEMU Wi-Fi shim + lwIP stack with **zero source
+diff** (only `CMakeLists.txt` + `sdkconfig` adjustments via the
+wrap script).  Sixteen non-console samples qualify, taking total
+stock-sample coverage from **74 → 90**.  The point of this sweep
+is not Wi-Fi runtime per se — these samples don't exercise
+`esp_wifi_*` — but rather to broaden the regression net protecting
+the wrap script.  Every ESP-IDF Wi-Fi sample inherits from one or
+more of these building blocks (event loops, timers, threads,
+selectors, eventfd, mqueue), so proving the wrap script handles
+them cleanly hardens the path the Wi-Fi-runtime samples depend on.
+
+Added in Day 61:
+
+- Timers / queues: `esp_timer`, `rt_mqueue`
+- Events: `esp_event/default_event_loop`, `esp_event/user_event_loops`
+- Threads: `pthread`, `freertos/real_time_stats`
+- Low-power: `light_sleep`, `deep_sleep`
+- VFS + selectors: `eventfd`, `select`
+- Services: `base_mac_address`, `startup_time`, `efuse`, `perfmon`,
+  `heap_task_tracking/{basic,advanced}`
+
+Skipped this round (require esp_wifi_qemu / arch extensions):
+
+- `task_watchdog` — links against `esp_task_wdt_*` (init / deinit /
+  add / add_user / reset / reset_user / delete / delete_user /
+  status).  Our project's sdkconfig elides the WDT component for
+  the QEMU base build, so these symbols are unresolved.
+- `ipc/ipc_isr/xtensa` — architecture-specific ASM dependency on
+  `get_ps_other_cpu` / `extended_ipc_isr_asm` that the public IDF
+  headers don't expose.
+
+Both are tracked in the backlog as future-work; their inclusion
+would require either component-level shims (task_watchdog) or
+arch-port digging (ipc_isr) — out of scope for a wrap-script
+generality sweep.  Day 61 leaves the wrap script unchanged: this
+is pure coverage-expansion through SAMPLES additions.
+
+Pinned by `test_basic_wifi_smoke_includes_day61_system_samples`
+(asserts the 16 entries are present).
 
 ### Day 59 — conditional `protocol_examples_common` injection (FB-032)
 

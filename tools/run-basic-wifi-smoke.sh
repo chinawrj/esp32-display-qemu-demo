@@ -223,6 +223,30 @@ SAMPLES=(
     "wifi_aware_nan_console|${IDF_PATH}/examples/wifi/wifi_aware/nan_console|station|build_only"
     "wifi_aware_nan_publisher|${IDF_PATH}/examples/wifi/wifi_aware/nan_publisher|station|build_only"
     "wifi_aware_nan_subscriber|${IDF_PATH}/examples/wifi/wifi_aware/nan_subscriber|station|build_only"
+    # Day-61 — survey examples/system/* for drop-in build_only candidates.
+    # Sixteen non-console system samples link clean against the QEMU
+    # Wi-Fi shim + lwIP stack with zero source diff, proving the wrap
+    # script is general-purpose enough for ESP-IDF's system-services
+    # examples (timers, events, threads, IPC, low-power, efuse, perf
+    # counters).  Skipped: task_watchdog (needs esp_task_wdt_* symbols
+    # that the QEMU build elides), ipc/ipc_isr (architecture-specific
+    # ASM dependency on get_ps_other_cpu / extended_ipc_isr_asm).
+    "sys_base_mac_address|${IDF_PATH}/examples/system/base_mac_address|station|build_only"
+    "sys_esp_timer|${IDF_PATH}/examples/system/esp_timer|station|build_only"
+    "sys_eventfd|${IDF_PATH}/examples/system/eventfd|station|build_only"
+    "sys_select|${IDF_PATH}/examples/system/select|station|build_only"
+    "sys_startup_time|${IDF_PATH}/examples/system/startup_time|station|build_only"
+    "sys_light_sleep|${IDF_PATH}/examples/system/light_sleep|station|build_only"
+    "sys_rt_mqueue|${IDF_PATH}/examples/system/rt_mqueue|station|build_only"
+    "sys_deep_sleep|${IDF_PATH}/examples/system/deep_sleep|station|build_only"
+    "sys_efuse|${IDF_PATH}/examples/system/efuse|station|build_only"
+    "sys_perfmon|${IDF_PATH}/examples/system/perfmon|station|build_only"
+    "sys_pthread|${IDF_PATH}/examples/system/pthread|station|build_only"
+    "sys_freertos_real_time_stats|${IDF_PATH}/examples/system/freertos/real_time_stats|station|build_only"
+    "sys_heap_task_tracking_basic|${IDF_PATH}/examples/system/heap_task_tracking/basic|station|build_only"
+    "sys_heap_task_tracking_advanced|${IDF_PATH}/examples/system/heap_task_tracking/advanced|station|build_only"
+    "sys_esp_event_default_loop|${IDF_PATH}/examples/system/esp_event/default_event_loop|station|build_only"
+    "sys_esp_event_user_loops|${IDF_PATH}/examples/system/esp_event/user_event_loops|station|build_only"
 )
 
 PASS=0

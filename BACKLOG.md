@@ -231,6 +231,21 @@ A given sample is "supported" when:
   0 failed` — all with zero `.c`/`.h` source diff (the project-wide
   `sdkconfig.qemu.wifi.defaults` already supplied
   `CONFIG_EXAMPLE_IPV4_ADDR="10.0.2.2"` + `CONFIG_EXAMPLE_PORT=3333`).
+- Day 61 — survey `examples/system/*` for drop-in build-only
+  candidates.  Sixteen non-console system samples join the smoke
+  gate, taking total stock-sample coverage from **74 → 90**: timers
+  (`esp_timer`, `rt_mqueue`), events (`esp_event/default_event_loop`,
+  `esp_event/user_event_loops`), threads (`pthread`,
+  `freertos/real_time_stats`), low-power (`light_sleep`,
+  `deep_sleep`), and assorted services (`base_mac_address`,
+  `eventfd`, `select`, `startup_time`, `efuse`, `perfmon`,
+  `heap_task_tracking/{basic,advanced}`).  All link clean against
+  `esp_wifi_qemu` + lwIP shim with zero `.c`/`.h` source diff —
+  proving the wrap script is general-purpose enough for ESP-IDF's
+  system-services examples.  Skipped this round: `task_watchdog`
+  (needs the `esp_task_wdt_*` API surface our build elides),
+  `ipc/ipc_isr/xtensa` (architecture-specific ASM dependency on
+  `get_ps_other_cpu` / `extended_ipc_isr_asm`).
 - 90 tests green (87 baseline + 3 Day 41 source-analysis tests).
 
 ### What is still a stub (the gap this backlog closes)

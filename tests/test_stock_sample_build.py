@@ -1333,3 +1333,35 @@ def test_sdkconfig_qemu_wifi_defaults_targets_relay_nat():
     assert "CONFIG_EXAMPLE_PORT=3333" in text, (
         "Day-60: sdkconfig.qemu.wifi.defaults must set EXAMPLE_PORT to 3333"
     )
+
+
+def test_basic_wifi_smoke_includes_day61_system_samples():
+    """Day-61: 16 non-console examples/system/* samples link clean
+    against the QEMU Wi-Fi shim with zero source diff.  This proves
+    the wrap script is general-purpose enough for ESP-IDF's
+    system-services examples (timers, events, threads, IPC, low-power,
+    efuse, perf counters) — broadening the regression net that
+    protects future Wi-Fi sample work.
+    """
+    script = (TOOLS_DIR / "run-basic-wifi-smoke.sh").read_text()
+    for name in (
+        "sys_base_mac_address",
+        "sys_esp_timer",
+        "sys_eventfd",
+        "sys_select",
+        "sys_startup_time",
+        "sys_light_sleep",
+        "sys_rt_mqueue",
+        "sys_deep_sleep",
+        "sys_efuse",
+        "sys_perfmon",
+        "sys_pthread",
+        "sys_freertos_real_time_stats",
+        "sys_heap_task_tracking_basic",
+        "sys_heap_task_tracking_advanced",
+        "sys_esp_event_default_loop",
+        "sys_esp_event_user_loops",
+    ):
+        assert f'"{name}|' in script, (
+            f"Day-61: smoke gate missing {name} build_only entry"
+        )
