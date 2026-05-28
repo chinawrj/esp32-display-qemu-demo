@@ -53,6 +53,10 @@ description: "esp32-display-qemu-demo 开发工作流 Agent - 驱动每日迭代
 - **项目名称**: esp32-display-qemu-demo
 - **项目描述**: 使用 ESP32 官方 QEMU 模拟器运行 LVGL UI 示例，无需真实硬件即可开发和验证显示界面
 - **目标硬件**: esp32-qemu
+- **AI 工作流源目录**: `.github/` 是唯一 source of truth；根目录、
+  `.claude/`、`.vscode/` 下的 AI 入口文件必须是 symlink / mirror。
+- **短上下文**: 先读 `.github/ai-project-context.md` 获取当前目标、
+  约束和验证命令。
 
 ## 可用 Skills
 
@@ -66,10 +70,63 @@ description: "esp32-display-qemu-demo 开发工作流 Agent - 驱动每日迭代
 
 ## MCP Servers
 
-以下 MCP servers 已配置在 `.vscode/mcp.json` 中，可在开发过程中直接使用：
+以下 MCP servers 的唯一源配置在 `.github/mcp.json` 中；`.mcp.json` 与
+`.vscode/mcp.json` 只是兼容性 symlink：
 
 - `espressif-docs`: 搜索 Espressif 官方文档，获取 ESP-IDF、ESP32 等产品技术资料
 - `esp-component-registry`: 搜索 ESP 组件注册表中的组件和示例代码
+
+## AI 工作流源目录与清理规则
+
+`.github/` 是本项目所有 AI 工作流文件的唯一 source of truth。Copilot、
+Claude、VS Code 或根目录需要的入口文件只能作为兼容层存在，不能成为第二份
+配置源。
+
+### Canonical files
+
+- `.github/ai-project-context.md` — 当前目标、约束、验证命令的短上下文
+- `.github/copilot-instructions.md` — Copilot repo-wide instructions
+- `.github/AGENTS.md` — root `AGENTS.md` 的 canonical source
+- `.github/agents/dev-workflow.agent.md` — 本 agent
+- `.github/skills/*/SKILL.md` — skills
+- `.github/instructions/*.instructions.md` — path-specific instructions
+- `.github/mcp.json` — MCP servers
+- `.github/workflow-feedback.md` — Skill / workflow feedback log
+- `.github/daily-plan-template.md` — 每日计划模板
+
+### Compatibility files
+
+以下文件必须是 symlink / mirror，不允许手工维护独立内容：
+
+- `AGENTS.md -> .github/AGENTS.md`
+- `.mcp.json -> .github/mcp.json`
+- `.vscode/mcp.json -> ../.github/mcp.json`
+- `.claude/agents/* -> ../../.github/agents/*`
+- `.claude/skills/* -> ../../.github/skills/*`
+
+### Validation flow for AI workflow edits
+
+当修改 `.github/agents`、`.github/skills`、`.github/instructions`、
+`.github/mcp.json`、`tools/sync-claude-mirror.sh` 或任何兼容入口文件时：
+
+1. 只编辑 `.github/` 下的 canonical 文件。
+2. 运行 `bash tools/sync-claude-mirror.sh` 重建兼容 symlink。
+3. 运行 `bash tools/validate-ai-workflow.sh`。
+4. 如发现流程缺口，追加到 `.github/workflow-feedback.md`。
+
+### Periodic cleanup workup
+
+完整 cleanup workup 不需要每天做；默认每 **3-5 个开发日** 做一次，或在
+AI 工作流结构发生较大变化后做一次。
+
+Cleanup workup 包含：
+
+1. 检查 `.copilot/`、根目录、`.claude/`、`.vscode/` 是否出现新的
+   AI source-of-truth 文件；除 symlink / mirror 外应清理或迁回 `.github/`。
+2. 运行 `bash tools/sync-claude-mirror.sh`。
+3. 运行 `bash tools/validate-ai-workflow.sh`。
+4. 检查 `.github/ai-project-context.md` 是否仍反映当前项目状态。
+5. 将清理中发现的流程问题追加到 `.github/workflow-feedback.md`。
 
 ## 验收标准
 
@@ -94,6 +151,11 @@ description: "esp32-display-qemu-demo 开发工作流 Agent - 驱动每日迭代
 
 每天按以下流程工作：
 
+0. **上下文加载与卫生检查** (Context + Hygiene)
+   - 先读 `.github/ai-project-context.md`
+   - 如本次任务涉及 AI 工作流文件，先读本文件的「AI 工作流源目录与清理规则」
+   - 检查 `git status --short`，识别已有未提交变更，不覆盖用户改动
+
 1. **晨会计划** (Morning Planning)
    - 回顾昨日进度
    - 确定今日目标（2-3 个具体任务）
@@ -109,6 +171,9 @@ description: "esp32-display-qemu-demo 开发工作流 Agent - 驱动每日迭代
    - 更新进度指标
    - 规划明日工作
    - **记录 Skill/工作流反馈** — 见下方「Skill 反馈」章节
+   - 如果修改了 AI 工作流文件，必须完成 validation flow
+   - 每 3-5 个开发日安排一次 periodic cleanup workup；非 cleanup 日只做
+     与本次修改直接相关的验证
 
 ### 开发工具使用
 
@@ -239,10 +304,15 @@ chore: 构建/工具变更
 - ❌ 不要在中断处理函数中执行复杂操作
 - ❌ 不要在未经用户确认的情况下假设硬件不可用
 - ❌ 不要绕过 tmux 直接执行编译、烧录、串口监控命令
+- ❌ 不要在 `.github/` 之外新增 AI 工作流 source-of-truth 文件
+- ❌ 不要手工编辑 `AGENTS.md`、`.mcp.json`、`.vscode/mcp.json`、
+  `.claude/agents/*`、`.claude/skills/*` 的独立内容；应修改 `.github/`
+  canonical source 后运行 `tools/sync-claude-mirror.sh`
 
 ## Skill 反馈 (Feedback Loop)
 
-在每日开发过程中，将遇到的 skill/工作流问题或改进建议记录到 **`docs/skill-feedback.md`**。
+在每日开发过程中，将遇到的 skill/工作流问题或改进建议记录到
+**`.github/workflow-feedback.md`**。
 
 ### 何时记录
 
@@ -254,7 +324,7 @@ chore: 构建/工具变更
 
 ### 记录格式
 
-在 `docs/skill-feedback.md` 末尾追加：
+在 `.github/workflow-feedback.md` 末尾追加：
 
 ```markdown
 ### FB-NNN (YYYY-MM-DD)
@@ -273,3 +343,5 @@ chore: 构建/工具变更
 - **不要删除**已有的反馈条目
 - 每日结束时确认是否有新的反馈需要记录
 - 反馈随每日 wrap-up commit 一起提交
+- 如果反馈涉及 AI 工作流文件位置或入口同步，必须同时运行
+  `bash tools/validate-ai-workflow.sh`

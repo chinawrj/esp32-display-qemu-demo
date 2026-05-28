@@ -20,7 +20,7 @@ description: 每日迭代开发工作流，包含晨会计划、执行开发和�
 
 ## 前置条件
 
-- 项目需求文档已确定（`requirements.md`）
+- 项目上下文已确定（`.github/ai-project-context.md`）
 - 工作流 Agent 已配置
 - 开发环境已就绪
 

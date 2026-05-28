@@ -3,6 +3,9 @@
 Running log of issues, gaps, and improvement ideas surfaced during the daily
 iteration. Append-only — entries are not deleted once recorded.
 
+This file is the canonical workflow-feedback log. Do not maintain duplicate
+AI workflow feedback under `.copilot/` or `docs/`.
+
 ### FB-001 (2026-04-30)
 - **Skill**: tools/run-qemu.sh + daily-iteration
 - **Category**: improvement
@@ -54,6 +57,8 @@ iteration. Append-only — entries are not deleted once recorded.
 - **Summary**: Claude Code's `.mcp.json` rejects URL-only entries silently — must include `"type": "http"` (or `sse`/`command`).
 - **Detail**: The repo's existing `.vscode/mcp.json` (consumed by GitHub Copilot CLI / VS Code) lists MCP servers as `{"url": "https://…"}`. When mirrored verbatim into a top-level `.mcp.json` for Claude Code 2.1.123, `claude mcp list` shows nothing (no error, no warning). Adding `"type": "http"` to each entry made `claude mcp get` reach `Status: ✓ Connected`. The Copilot URL-only form is therefore not portable; the agent template should call out the explicit-type requirement.
 - **Workaround**: Always include `"type": "http"` (or sse/stdio command) in `.mcp.json`. Repo now has both `.vscode/mcp.json` (Copilot-style) and `.mcp.json` (Claude-style) side by side; tests/test_dual_cli_parity.py enforces the type field.
+- **2026-05-28 update**: `.github/mcp.json` is now the only source; `.mcp.json`
+  and `.vscode/mcp.json` are compatibility symlinks to it.
 - **Priority**: medium
 
 ### FB-007 (2026-04-30)

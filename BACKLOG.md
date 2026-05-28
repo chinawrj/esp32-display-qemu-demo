@@ -564,7 +564,7 @@ checks fire on synthetic relapse input.
 
 ### CC-2 — Skill follow-up
 
-`docs/skill-feedback.md` should grow an entry per phase summarizing
+`.github/workflow-feedback.md` should grow an entry per phase summarizing
 which `automated-testing` patterns worked / didn't (e.g. how to write
 a runtime test that varies between machines because real Wi-Fi APs
 differ).

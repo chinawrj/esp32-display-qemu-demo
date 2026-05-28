@@ -1,10 +1,1 @@
-{
-    "mcpServers": {
-        "espressif-documentation": {
-            "url": "https://mcp.espressif.com/docs"
-        },
-        "esp-component-registry": {
-            "url": "https://components.espressif.com/mcp"
-        }
-    }
-}
+../.github/mcp.json

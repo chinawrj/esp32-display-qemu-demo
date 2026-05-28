@@ -338,7 +338,7 @@ esp32-display-qemu-demo/
 │   ├── qemu-native-fb.md       # Phase-5 investigation: native QEMU FB bridge
 │   └── realtime-push.md        # Phase-2b design: live push (chardev/TCP/shmem)
 ├── requirements.txt            # Python deps (Pillow, websockets, aiohttp, playwright)
-└── .copilot/docs/skill-feedback.md   # iterative skill improvements log
+└── .github/                    # AI workflow source: agents, skills, instructions, MCP config
 ```
 
 ---
@@ -389,19 +389,23 @@ state) and is automatable via Chrome DevTools Protocol.
 
 ---
 
-## AI-assisted dev workflow (dual-CLI: GitHub Copilot CLI + Claude Code)
+## AI-assisted dev workflow
 
 This repo ships a small set of project-level **agents**, **skills**, and **MCP
-servers** that drive its daily-iteration workflow. Both the GitHub Copilot CLI
-and Anthropic's Claude Code CLI can use the same source files — the layouts
-are kept in sync via symlinks, so there is exactly **one canonical source per
-artefact** to maintain.
+servers** that drive its daily-iteration workflow. `.github/` is the only
+source of truth for AI workflow content; any root-level, `.claude/`, or
+`.vscode/` AI entrypoint is a compatibility symlink back into `.github/`.
 
-| Artefact | Canonical source | Copilot CLI sees it as | Claude Code sees it as |
-|---|---|---|---|
-| Dev-workflow agent | `.github/agents/dev-workflow.agent.md` | `.github/agents/…` (native) | `.claude/agents/dev-workflow.md` (symlink) |
-| Skills (×7) | `.github/skills/<name>/` | `.github/skills/…` (native) | `.claude/skills/<name>/` (symlink) |
-| MCP servers | `.mcp.json` (Claude) + `.vscode/mcp.json` (Copilot) | `.vscode/mcp.json` | `.mcp.json` |
+| Artefact | Canonical source under `.github` | Compatibility view |
+|---|---|---|
+| Repository instructions | `.github/copilot-instructions.md` | Copilot loads directly |
+| Agent entrypoint | `.github/AGENTS.md` | `AGENTS.md` symlink |
+| Dev-workflow agent | `.github/agents/dev-workflow.agent.md` | `.claude/agents/dev-workflow.md` symlink |
+| Skills (×7) | `.github/skills/<name>/` | `.claude/skills/<name>/` symlink |
+| Path instructions | `.github/instructions/*.instructions.md` | Copilot path-specific instructions |
+| MCP servers | `.github/mcp.json` | `.mcp.json` and `.vscode/mcp.json` symlinks |
+| Short project context | `.github/ai-project-context.md` | Referenced by instructions and agents |
+| Workflow feedback | `.github/workflow-feedback.md` | No duplicate `.copilot` copy |
 
 Both CLIs follow the [Agent Skills open standard](https://agentskills.io)
 (YAML frontmatter `name` + `description`, then the Markdown playbook), so the
@@ -410,6 +414,9 @@ existing `SKILL.md` files are byte-identical in both views.
 **Verify discovery:**
 
 ```bash
+# Local workflow gate:
+bash tools/validate-ai-workflow.sh
+
 # Copilot CLI: just open the repo and ask "list project skills"
 # Claude Code CLI:
 claude agents                                 # → "Project agents: dev-workflow"
@@ -418,13 +425,15 @@ claude --print "List project skills, names only" \
   --permission-mode bypassPermissions         # → 7 skill names
 ```
 
-A pytest case at `tests/test_dual_cli_parity.py` enforces the symlink mirror
-and frontmatter shape, so dual-CLI parity will not silently regress.
+A pytest case at `tests/test_dual_cli_parity.py` enforces the `.github`
+source-of-truth contract, compatibility symlinks, and frontmatter shape.
 
-When adding a **new skill**, only edit the canonical `.github/skills/<name>/`
-directory — the corresponding `.claude/skills/<name>/` symlink is added once
-by `tools/sync-claude-mirror.sh` (or by hand:
-`ln -s ../../.github/skills/<name> .claude/skills/<name>`).
+When adding a **new skill** or AI entrypoint, only edit `.github/`, then run:
+
+```bash
+bash tools/sync-claude-mirror.sh
+bash tools/validate-ai-workflow.sh
+```
 
 ---
 

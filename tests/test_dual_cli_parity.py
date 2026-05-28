@@ -16,9 +16,10 @@ This test enforces:
 3. There are no dangling or orphan symlinks in ``.claude/``.
 4. Every SKILL.md (and the agent file) carries the YAML frontmatter
    keys required by both CLIs (``name`` and ``description``).
-5. ``.mcp.json`` exists at the repo root for Claude Code, and every
-   server entry declares ``type`` (Claude requires this; the older
-   ``.vscode/mcp.json`` URL-only form is Copilot-CLI-only).
+5. ``.github`` is the source of truth for AI workflow files. Root/Claude/VS
+   Code compatibility files must be symlinks back into ``.github``.
+6. The canonical MCP config lives at ``.github/mcp.json`` and every server
+   entry declares ``type``.
 
 If any of these break, the dual-CLI workflow has silently regressed.
 """
@@ -35,7 +36,15 @@ GITHUB_SKILLS = PROJECT_ROOT / ".github" / "skills"
 GITHUB_AGENTS = PROJECT_ROOT / ".github" / "agents"
 CLAUDE_SKILLS = PROJECT_ROOT / ".claude" / "skills"
 CLAUDE_AGENTS = PROJECT_ROOT / ".claude" / "agents"
-MCP_JSON = PROJECT_ROOT / ".mcp.json"
+GITHUB_MCP_JSON = PROJECT_ROOT / ".github" / "mcp.json"
+ROOT_MCP_JSON = PROJECT_ROOT / ".mcp.json"
+VSCODE_MCP_JSON = PROJECT_ROOT / ".vscode" / "mcp.json"
+ROOT_AGENTS = PROJECT_ROOT / "AGENTS.md"
+GITHUB_AGENTS_ENTRY = PROJECT_ROOT / ".github" / "AGENTS.md"
+GITHUB_COPILOT_INSTRUCTIONS = PROJECT_ROOT / ".github" / "copilot-instructions.md"
+GITHUB_CONTEXT = PROJECT_ROOT / ".github" / "ai-project-context.md"
+GITHUB_INSTRUCTIONS = PROJECT_ROOT / ".github" / "instructions"
+COPILOT_DIR = PROJECT_ROOT / ".copilot"
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
 
@@ -121,8 +130,8 @@ def test_no_orphan_mirror_entries() -> None:
 
 
 def test_mcp_json_format_for_claude() -> None:
-    assert MCP_JSON.is_file(), "Claude Code requires .mcp.json at the repo root"
-    data = json.loads(MCP_JSON.read_text(encoding="utf-8"))
+    assert GITHUB_MCP_JSON.is_file(), "canonical MCP config must live under .github"
+    data = json.loads(GITHUB_MCP_JSON.read_text(encoding="utf-8"))
     servers = data.get("mcpServers")
     assert isinstance(servers, dict) and servers, ".mcp.json must define mcpServers"
     for name, cfg in servers.items():
@@ -136,3 +145,32 @@ def test_mcp_json_format_for_claude() -> None:
             assert cfg.get("type") in {"http", "sse"}, (
                 f"{name}: URL servers must set type=http or type=sse"
             )
+
+
+def test_root_ai_entrypoints_are_symlinks_to_github() -> None:
+    expected = {
+        ROOT_AGENTS: GITHUB_AGENTS_ENTRY,
+        ROOT_MCP_JSON: GITHUB_MCP_JSON,
+        VSCODE_MCP_JSON: GITHUB_MCP_JSON,
+    }
+    for link, target in expected.items():
+        assert link.is_symlink(), f"{link} must be a compatibility symlink, not source"
+        assert link.resolve() == target.resolve(), (
+            f"{link} resolves to {link.resolve()}, expected {target.resolve()}"
+        )
+
+
+def test_copilot_entrypoints_live_under_github() -> None:
+    assert GITHUB_COPILOT_INSTRUCTIONS.is_file()
+    assert GITHUB_CONTEXT.is_file()
+    assert GITHUB_AGENTS_ENTRY.is_file()
+    instructions = sorted(GITHUB_INSTRUCTIONS.glob("*.instructions.md"))
+    assert instructions, ".github/instructions must contain path-specific instructions"
+
+
+def test_no_copilot_source_tree() -> None:
+    """The old .copilot tree must not contain source-of-truth AI files."""
+    if not COPILOT_DIR.exists():
+        return
+    files = [p for p in COPILOT_DIR.rglob("*") if p.is_file()]
+    assert not files, f".copilot contains stale AI source files: {files}"

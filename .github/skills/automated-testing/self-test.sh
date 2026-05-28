@@ -3,7 +3,7 @@
 # 运行: bash skills/automated-testing/self-test.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/../_common/detect-python.sh"
+source "$SCRIPT_DIR/../../scripts/detect-python.sh"
 
 PASS=0
 FAIL=0

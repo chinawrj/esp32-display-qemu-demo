@@ -19,7 +19,7 @@ test_case() {
 # --- Test 1: git 分支工作流 ---
 test_case "git_branch_workflow" bash -c '
   TMP_REPO=$(mktemp -d)
-  cd "$TMP_REPO" && git init -q && \
+  cd "$TMP_REPO" && git init -q -b main && \
     git config user.email "test@test.com" && git config user.name "test" && \
     echo "init" > file.txt && git add . && git commit -q -m "init" && \
     git checkout -q -b refactor/test && \
